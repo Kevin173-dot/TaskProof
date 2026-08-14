@@ -9,17 +9,26 @@ import 'main_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
+
+  final firebaseInitialization = Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
   // google_sign_in 7.x must be initialized exactly once before authenticate().
-  if (!kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS)) {
-    await GoogleSignIn.instance.initialize();
-  }
+  final googleSignInInitialization =
+      !kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS ||
+              defaultTargetPlatform == TargetPlatform.macOS)
+      ? GoogleSignIn.instance.initialize()
+      : Future<void>.value();
+
+  // These SDKs initialize independently. Running them together preserves the
+  // authentication gate while avoiding two serial waits before first paint.
+  await Future.wait<Object?>([
+    firebaseInitialization,
+    googleSignInInitialization,
+  ]);
 
   runApp(const TaskProofApp());
 }
@@ -114,7 +123,8 @@ class AuthService {
       return;
     }
 
-    final supported = defaultTargetPlatform == TargetPlatform.android ||
+    final supported =
+        defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS ||
         defaultTargetPlatform == TargetPlatform.macOS;
 
@@ -267,7 +277,9 @@ class _LoginPageState extends State<LoginPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: sending ? null : () => Navigator.pop(dialogContext),
+                  onPressed: sending
+                      ? null
+                      : () => Navigator.pop(dialogContext),
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
@@ -276,7 +288,10 @@ class _LoginPageState extends State<LoginPage> {
                       : () async {
                           final email = controller.text.trim();
                           if (!isValidEmail(email)) {
-                            _showMessage('Enter a valid email address.', isError: true);
+                            _showMessage(
+                              'Enter a valid email address.',
+                              isError: true,
+                            );
                             return;
                           }
 
@@ -329,23 +344,23 @@ class _LoginPageState extends State<LoginPage> {
             final horizontalPadding = screenWidth < 360
                 ? 18.0
                 : screenWidth < 430
-                    ? 22.0
-                    : 28.0;
+                ? 22.0
+                : 28.0;
             final logoSize = isVerySmallPhone
                 ? 94.0
                 : isSmallPhone
-                    ? 108.0
-                    : 122.0;
+                ? 108.0
+                : 122.0;
             final inputHeight = isVerySmallPhone
                 ? 56.0
                 : isSmallPhone
-                    ? 60.0
-                    : 64.0;
+                ? 60.0
+                : 64.0;
             final buttonHeight = isVerySmallPhone
                 ? 54.0
                 : isSmallPhone
-                    ? 58.0
-                    : 60.0;
+                ? 58.0
+                : 60.0;
 
             return SingleChildScrollView(
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -396,8 +411,12 @@ class _LoginPageState extends State<LoginPage> {
                           compact: isVerySmallPhone,
                           validator: (value) {
                             final email = value?.trim() ?? '';
-                            if (email.isEmpty) return 'Enter your email address.';
-                            if (!isValidEmail(email)) return 'Enter a valid email address.';
+                            if (email.isEmpty) {
+                              return 'Enter your email address.';
+                            }
+                            if (!isValidEmail(email)) {
+                              return 'Enter a valid email address.';
+                            }
                             return null;
                           },
                         ),
@@ -412,7 +431,9 @@ class _LoginPageState extends State<LoginPage> {
                           height: inputHeight,
                           compact: isVerySmallPhone,
                           validator: (value) {
-                            if ((value ?? '').isEmpty) return 'Enter your password.';
+                            if ((value ?? '').isEmpty) {
+                              return 'Enter your password.';
+                            }
                             return null;
                           },
                           suffix: IconButton(
@@ -431,7 +452,9 @@ class _LoginPageState extends State<LoginPage> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
-                            onPressed: loading ? null : _showForgotPasswordDialog,
+                            onPressed: loading
+                                ? null
+                                : _showForgotPasswordDialog,
                             child: const Text('Forgot password?'),
                           ),
                         ),
@@ -454,6 +477,7 @@ class _LoginPageState extends State<LoginPage> {
                             width: 34,
                             height: 34,
                             fit: BoxFit.cover,
+                            cacheHeight: 128,
                           ),
                           onPressed: loading
                               ? null
@@ -464,7 +488,11 @@ class _LoginPageState extends State<LoginPage> {
                           label: 'Continue with Apple',
                           height: buttonHeight,
                           compact: isVerySmallPhone,
-                          icon: const Icon(Icons.apple, size: 32, color: Colors.black),
+                          icon: const Icon(
+                            Icons.apple,
+                            size: 32,
+                            color: Colors.black,
+                          ),
                           onPressed: loading
                               ? null
                               : () => _runAuth(AuthService.signInWithApple),
@@ -614,7 +642,9 @@ class _SignUpPageState extends State<SignUpPage> {
                       validator: (value) {
                         final email = value?.trim() ?? '';
                         if (email.isEmpty) return 'Enter your email address.';
-                        if (!isValidEmail(email)) return 'Enter a valid email address.';
+                        if (!isValidEmail(email)) {
+                          return 'Enter a valid email address.';
+                        }
                         return null;
                       },
                     ),
@@ -634,9 +664,8 @@ class _SignUpPageState extends State<SignUpPage> {
                         return null;
                       },
                       suffix: IconButton(
-                        onPressed: () => setState(
-                          () => obscurePassword = !obscurePassword,
-                        ),
+                        onPressed: () =>
+                            setState(() => obscurePassword = !obscurePassword),
                         icon: Icon(
                           obscurePassword
                               ? Icons.visibility_outlined
@@ -662,7 +691,8 @@ class _SignUpPageState extends State<SignUpPage> {
                       },
                       suffix: IconButton(
                         onPressed: () => setState(
-                          () => obscureConfirmPassword = !obscureConfirmPassword,
+                          () =>
+                              obscureConfirmPassword = !obscureConfirmPassword,
                         ),
                         icon: Icon(
                           obscureConfirmPassword
@@ -694,8 +724,6 @@ class _SignUpPageState extends State<SignUpPage> {
   }
 }
 
-
-
 class _TaskProofHeader extends StatelessWidget {
   const _TaskProofHeader({required this.logoSize, required this.compact});
 
@@ -704,6 +732,11 @@ class _TaskProofHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final decodedLogoSize = (logoSize * MediaQuery.devicePixelRatioOf(context))
+        .ceil()
+        .clamp(logoSize.ceil(), 512)
+        .toInt();
+
     return Column(
       children: [
         Container(
@@ -724,6 +757,8 @@ class _TaskProofHeader extends StatelessWidget {
             child: Image.asset(
               'assets/images/taskproof_logo.png',
               fit: BoxFit.cover,
+              cacheWidth: decodedLogoSize,
+              cacheHeight: decodedLogoSize,
             ),
           ),
         ),

@@ -1,4 +1,23 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart'
+    hide InputImage, InputImageMetadata, InputImageFormat, InputImageRotation;
+
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart'
+    hide InputImage, InputImageMetadata, InputImageFormat, InputImageRotation;
+
+import 'active_camera_preview_page.dart';
+import 'object_scan_page.dart';
+import 'object_scan_repository.dart';
+import 'workout_camera_preview_page.dart';
 
 // =============================================================
 // TASK ICON TYPES
@@ -29,16 +48,102 @@ enum TaskIconType {
 // TASK STATUS
 // =============================================================
 
-enum TaskStatus {
-  ready,
-  scheduled,
-  live,
-  completed,
+enum TaskStatus { ready, scheduled, live, completed }
+
+enum TaskMode { focus, active, workout }
+
+enum ActivityLevel { light, moderate, high }
+
+enum WorkoutMovementType { repetitions, hold, continuous }
+
+enum WorkoutExercise {
+  pushUps,
+  squats,
+  jumpingJacks,
+  lunges,
+  sitUps,
+  burpees,
+  mountainClimbers,
+  highKnees,
+  plank,
+  wallSit,
+  runningInPlace,
+  jumpRope,
+}
+
+// =============================================================
+// REFERENCE POSE
+// =============================================================
+
+class PoseReference {
+  const PoseReference({
+    required this.landmarks,
+    required this.centerX,
+    required this.centerY,
+    required this.poseScale,
+    this.headYaw,
+    this.headPitch,
+    this.headRoll,
+  });
+
+  // Whatever body landmarks were visible when the reference was captured.
+  // No particular body part is required.
+  final Map<PoseLandmarkType, Offset> landmarks;
+
+  // Overall position of the detected person in the frame.
+  final double centerX;
+  final double centerY;
+
+  // Approximate size/spread of the visible pose.
+  final double poseScale;
+
+  // Optional face orientation.
+  // Face detection improves verification, but is NOT required
+  // in order to save a reference.
+  final double? headYaw;
+  final double? headPitch;
+  final double? headRoll;
 }
 
 // =============================================================
 // TASK DATA
 // =============================================================
+class ActiveTaskConfig {
+  const ActiveTaskConfig({
+    required this.activityLevel,
+    required this.inactivityWarning,
+    required this.briefExitAllowance,
+    this.requiredObjectIds = const [],
+  });
+
+  final ActivityLevel activityLevel;
+  final Duration inactivityWarning;
+  final Duration briefExitAllowance;
+
+  final List<String> requiredObjectIds;
+}
+
+class WorkoutTaskConfig {
+  const WorkoutTaskConfig({
+    required this.movementType,
+    required this.exercise,
+    required this.repGoal,
+    required this.targetDuration,
+    required this.restLimit,
+    required this.formChecking,
+  });
+
+  final WorkoutMovementType movementType;
+  final WorkoutExercise exercise;
+
+  final int repGoal;
+
+  final Duration targetDuration;
+
+  final Duration restLimit;
+
+  final bool formChecking;
+}
 
 class TaskData {
   TaskData({
@@ -48,19 +153,29 @@ class TaskData {
     required this.hours,
     required this.minutes,
     required this.seconds,
+    required this.mode,
     required this.stayInPosition,
     required this.objectInFrame,
     required this.alarm,
     required this.sensitivity,
+    this.poseReference,
+    this.activeConfig,
+    this.workoutConfig,
     this.status = TaskStatus.ready,
     this.scheduledFor,
     this.startedAt,
     this.completedAt,
     this.scheduleAlertShown = false,
   });
+  final TaskMode mode;
+
+  final ActiveTaskConfig? activeConfig;
+
+  final WorkoutTaskConfig? workoutConfig;
 
   final String id;
   final String name;
+
   final TaskIconType icon;
 
   final int hours;
@@ -73,6 +188,10 @@ class TaskData {
   final String alarm;
   final double sensitivity;
 
+  // Mutable because a task can calibrate when
+  // the live session starts.
+  PoseReference? poseReference;
+
   TaskStatus status;
 
   DateTime? scheduledFor;
@@ -82,11 +201,292 @@ class TaskData {
   bool scheduleAlertShown;
 
   Duration get duration {
-    return Duration(
-      hours: hours,
-      minutes: minutes,
-      seconds: seconds,
+    return Duration(hours: hours, minutes: minutes, seconds: seconds);
+  }
+}
+
+// =============================================================
+// CAMERA FRAME FOR ML KIT
+// =============================================================
+
+class MlKitCameraFrame {
+  const MlKitCameraFrame({required this.inputImage, required this.imageSize});
+
+  final InputImage inputImage;
+
+  final Size imageSize;
+}
+
+// =============================================================
+// CAMERA IMAGE -> ML KIT IMAGE
+// =============================================================
+
+class MlKitCameraImageConverter {
+  static const Map<DeviceOrientation, int> _orientations = {
+    DeviceOrientation.portraitUp: 0,
+    DeviceOrientation.landscapeLeft: 90,
+    DeviceOrientation.portraitDown: 180,
+    DeviceOrientation.landscapeRight: 270,
+  };
+
+  // ===========================================================
+  // MOBILE SUPPORT
+  // ===========================================================
+
+  static bool get supported {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  // ===========================================================
+  // CAMERA FORMAT
+  // ===========================================================
+
+  static ImageFormatGroup get cameraFormat {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return ImageFormatGroup.bgra8888;
+    }
+
+    return ImageFormatGroup.nv21;
+  }
+
+  // ===========================================================
+  // CONVERT
+  // ===========================================================
+
+  static MlKitCameraFrame? convert({
+    required CameraImage image,
+    required CameraDescription camera,
+    required DeviceOrientation deviceOrientation,
+  }) {
+    if (!supported) {
+      return null;
+    }
+
+    // =========================================================
+    // ROTATION
+    // =========================================================
+
+    final sensorOrientation = camera.sensorOrientation;
+
+    InputImageRotation? rotation;
+
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      var rotationCompensation = _orientations[deviceOrientation];
+
+      if (rotationCompensation == null) {
+        return null;
+      }
+
+      if (camera.lensDirection == CameraLensDirection.front) {
+        rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
+      } else {
+        rotationCompensation =
+            (sensorOrientation - rotationCompensation + 360) % 360;
+      }
+
+      rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
+    }
+
+    if (rotation == null) {
+      return null;
+    }
+
+    // =========================================================
+    // IMAGE FORMAT
+    // =========================================================
+
+    final rawFormat = image.format.raw;
+
+    if (rawFormat is! int) {
+      return null;
+    }
+
+    final format = InputImageFormatValue.fromRawValue(rawFormat);
+
+    if (format == null) {
+      return null;
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        format != InputImageFormat.nv21) {
+      return null;
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.iOS &&
+        format != InputImageFormat.bgra8888) {
+      return null;
+    }
+
+    if (image.planes.length != 1) {
+      return null;
+    }
+
+    final plane = image.planes.first;
+
+    // =========================================================
+    // BUILD INPUT IMAGE
+    // =========================================================
+
+    final rawSize = Size(image.width.toDouble(), image.height.toDouble());
+
+    final inputImage = InputImage.fromBytes(
+      bytes: plane.bytes,
+      metadata: InputImageMetadata(
+        size: rawSize,
+        rotation: rotation,
+        format: format,
+        bytesPerRow: plane.bytesPerRow,
+      ),
     );
+
+    final coordinateSize =
+        defaultTargetPlatform == TargetPlatform.android &&
+            (rotation == InputImageRotation.rotation90deg ||
+                rotation == InputImageRotation.rotation270deg)
+        ? Size(rawSize.height, rawSize.width)
+        : rawSize;
+
+    return MlKitCameraFrame(inputImage: inputImage, imageSize: coordinateSize);
+  }
+}
+
+// =============================================================
+// POSE ANALYZER
+// =============================================================
+
+class TaskPoseAnalyzer {
+  // ===========================================================
+  // CREATE REFERENCE/OBSERVATION
+  // ===========================================================
+
+  static PoseReference? createSnapshot({
+    required List<Pose> poses,
+    required List<Face> faces,
+    required Size imageSize,
+  }) {
+    if (poses.isEmpty || imageSize.width <= 0 || imageSize.height <= 0) {
+      return null;
+    }
+
+    Pose? bestPose;
+    int bestVisibleCount = 0;
+
+    for (final pose in poses) {
+      int visibleCount = 0;
+
+      for (final landmark in pose.landmarks.values) {
+        if (landmark.likelihood >= 0.35) {
+          visibleCount++;
+        }
+      }
+
+      if (visibleCount > bestVisibleCount) {
+        bestVisibleCount = visibleCount;
+        bestPose = pose;
+      }
+    }
+
+    if (bestPose == null) {
+      return null;
+    }
+
+    if (bestVisibleCount < 4) {
+      return null;
+    }
+
+    final visibleLandmarks = <PoseLandmarkType, Offset>{};
+
+    for (final entry in bestPose.landmarks.entries) {
+      final landmark = entry.value;
+
+      if (landmark.likelihood < 0.35) {
+        continue;
+      }
+
+      visibleLandmarks[entry.key] = Offset(
+        landmark.x / imageSize.width,
+        landmark.y / imageSize.height,
+      );
+    }
+
+    if (visibleLandmarks.length < 4) {
+      return null;
+    }
+
+    double totalX = 0;
+    double totalY = 0;
+
+    for (final point in visibleLandmarks.values) {
+      totalX += point.dx;
+      totalY += point.dy;
+    }
+
+    final centerX = totalX / visibleLandmarks.length;
+    final centerY = totalY / visibleLandmarks.length;
+
+    double totalDistanceSquared = 0;
+
+    for (final point in visibleLandmarks.values) {
+      final dx = point.dx - centerX;
+      final dy = point.dy - centerY;
+
+      totalDistanceSquared += (dx * dx) + (dy * dy);
+    }
+
+    final poseScale = math.sqrt(totalDistanceSquared / visibleLandmarks.length);
+
+    Face? face;
+
+    if (faces.isNotEmpty) {
+      face = faces.reduce((a, b) {
+        final areaA = a.boundingBox.width * a.boundingBox.height;
+
+        final areaB = b.boundingBox.width * b.boundingBox.height;
+
+        return areaA >= areaB ? a : b;
+      });
+    }
+
+    return PoseReference(
+      landmarks: visibleLandmarks,
+      centerX: centerX,
+      centerY: centerY,
+      poseScale: poseScale,
+      headYaw: face?.headEulerAngleY,
+      headPitch: face?.headEulerAngleX,
+      headRoll: face?.headEulerAngleZ,
+    );
+  }
+
+  // ===========================================================
+  // LANDMARK QUALITY
+  // ===========================================================
+
+  // ===========================================================
+  // ANGLE DIFFERENCE
+  // ===========================================================
+
+  static double angleDifference(double first, double second) {
+    var difference = (first - second).abs();
+
+    while (difference > 360) {
+      difference -= 360;
+    }
+
+    if (difference > 180) {
+      difference = 360 - difference;
+    }
+
+    return difference.abs();
   }
 }
 
@@ -95,10 +495,7 @@ class TaskData {
 // =============================================================
 
 class NewTaskPage extends StatefulWidget {
-  const NewTaskPage({
-    super.key,
-    this.isDarkMode = false,
-  });
+  const NewTaskPage({super.key, this.isDarkMode = false});
 
   final bool isDarkMode;
 
@@ -111,20 +508,25 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // TASK NAME
   // ===========================================================
 
-  final TextEditingController taskNameController =
-      TextEditingController();
+  final TextEditingController taskNameController = TextEditingController();
 
   // ===========================================================
   // DURATION
   // ===========================================================
 
   late final FixedExtentScrollController _hoursController;
+
   late final FixedExtentScrollController _minutesController;
+
   late final FixedExtentScrollController _secondsController;
 
-  int hours = 4;
-  int minutes = 30;
+  int hours = 0;
+  int minutes = 0;
   int seconds = 0;
+
+  late final ValueNotifier<int> _hoursValue;
+  late final ValueNotifier<int> _minutesValue;
+  late final ValueNotifier<int> _secondsValue;
 
   // ===========================================================
   // SCHEDULE
@@ -133,6 +535,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
   bool scheduleEnabled = false;
 
   DateTime? selectedScheduleDate;
+
   TimeOfDay? selectedScheduleTime;
 
   // ===========================================================
@@ -140,35 +543,59 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // ===========================================================
 
   bool stayInPosition = true;
+
   bool objectInFrame = false;
 
+  TaskMode selectedMode = TaskMode.focus;
+
+  // ACTIVE
+  ActivityLevel activityLevel = ActivityLevel.moderate;
+
+  Duration inactivityWarning = const Duration(minutes: 2);
+
+  Duration briefExitAllowance = const Duration(seconds: 30);
+
+  // WORKOUT
+  WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
+
+  WorkoutExercise selectedExercise = WorkoutExercise.pushUps;
+
+  int workoutRepGoal = 20;
+
+  Duration workoutTargetDuration = const Duration(minutes: 1);
+
+  Duration workoutRestLimit = const Duration(seconds: 30);
+
+  bool workoutFormChecking = false;
   // ===========================================================
-  // REFERENCE SETUP
+  // REFERENCE
   // ===========================================================
+
+  PoseReference? referencePose;
+
+  final List<SavedObjectScan> selectedObjectScans = [];
 
   int capturedObjects = 0;
-  bool referencePositionCaptured = false;
 
   // ===========================================================
-  // OTHER SETTINGS
+  // SETTINGS
   // ===========================================================
 
-  double sensitivity = 0.5;
+  double sensitivity = .5;
+
+  late final ValueNotifier<double> _sensitivityValue;
 
   String selectedAlarm = 'Default Alarm';
 
   // ===========================================================
-  // TASK ICON
+  // ICON
   // ===========================================================
 
   TaskIconType selectedTaskIcon = TaskIconType.generic;
 
   bool taskIconManuallySelected = false;
 
-  // ===========================================================
-  // PRO
-  // ===========================================================
-
+  // Change when subscriptions are connected.
   final bool isPro = false;
 
   // ===========================================================
@@ -179,17 +606,19 @@ class _NewTaskPageState extends State<NewTaskPage> {
   void initState() {
     super.initState();
 
-    _hoursController = FixedExtentScrollController(
-      initialItem: hours,
-    );
+    _hoursController = FixedExtentScrollController(initialItem: hours);
 
-    _minutesController = FixedExtentScrollController(
-      initialItem: minutes,
-    );
+    _minutesController = FixedExtentScrollController(initialItem: minutes);
 
-    _secondsController = FixedExtentScrollController(
-      initialItem: seconds,
-    );
+    _secondsController = FixedExtentScrollController(initialItem: seconds);
+
+    _hoursValue = ValueNotifier(hours);
+
+    _minutesValue = ValueNotifier(minutes);
+
+    _secondsValue = ValueNotifier(seconds);
+
+    _sensitivityValue = ValueNotifier(sensitivity);
   }
 
   @override
@@ -197,8 +626,18 @@ class _NewTaskPageState extends State<NewTaskPage> {
     taskNameController.dispose();
 
     _hoursController.dispose();
+
     _minutesController.dispose();
+
     _secondsController.dispose();
+
+    _hoursValue.dispose();
+
+    _minutesValue.dispose();
+
+    _secondsValue.dispose();
+
+    _sensitivityValue.dispose();
 
     super.dispose();
   }
@@ -212,16 +651,11 @@ class _NewTaskPageState extends State<NewTaskPage> {
     final dark = widget.isDarkMode;
 
     final theme = Theme.of(context).copyWith(
-      brightness:
-          dark ? Brightness.dark : Brightness.light,
-      scaffoldBackgroundColor:
-          dark ? _T.background : const Color(0xFFF4F4F6),
-      canvasColor:
-          dark ? _T.surface : Colors.white,
-      cardColor:
-          dark ? _T.surface : Colors.white,
-      dividerColor:
-          dark ? _T.border : const Color(0xFFE2E3E7),
+      brightness: dark ? Brightness.dark : Brightness.light,
+      scaffoldBackgroundColor: dark ? _T.background : const Color(0xFFF4F4F6),
+      canvasColor: dark ? _T.surface : Colors.white,
+      cardColor: dark ? _T.surface : Colors.white,
+      dividerColor: dark ? _T.border : const Color(0xFFE2E3E7),
       colorScheme: dark
           ? const ColorScheme.dark(
               primary: _C.red,
@@ -238,188 +672,318 @@ class _NewTaskPageState extends State<NewTaskPage> {
     return Theme(
       data: theme,
       child: Scaffold(
-      backgroundColor:
-          dark ? _T.background : const Color(0xFFF4F4F6),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: 460,
-          ),
-          child: ColoredBox(
-            color: dark ? _T.background : Colors.white,
-            child: SafeArea(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(
-                  18,
-                  12,
-                  18,
-                  28,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // =================================================
-                    // HEADER
-                    // =================================================
+        backgroundColor: dark ? _T.background : const Color(0xFFF4F4F6),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: ColoredBox(
+              color: dark ? _T.background : Colors.white,
+              child: SafeArea(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // =========================================
+                      // HEADER
+                      // =========================================
+                      _buildHeader(),
 
-                    _buildHeader(),
+                      const SizedBox(height: 24),
 
-                    const SizedBox(height: 24),
+                      // =========================================
+                      // TASK NAME
+                      // =========================================
+                      const _SectionTitle('Task Name'),
 
-                    // =================================================
-                    // TASK NAME
-                    // =================================================
+                      const SizedBox(height: 9),
 
-                    const _SectionTitle(
-                      'Task Name',
-                    ),
+                      _buildTaskNameField(),
 
-                    const SizedBox(height: 9),
+                      const SizedBox(height: 22),
 
-                    _buildTaskNameField(),
+                      // =========================================
+                      // DURATION
+                      // =========================================
+                      const _SectionTitle('Duration'),
 
-                    const SizedBox(height: 22),
+                      const SizedBox(height: 10),
 
-                    // =================================================
-                    // DURATION
-                    // =================================================
+                      _buildDurationPicker(),
 
-                    const _SectionTitle(
-                      'Duration',
-                    ),
+                      const SizedBox(height: 8),
 
-                    const SizedBox(height: 10),
-
-                    _buildDurationPicker(),
-
-                    const SizedBox(height: 8),
-
-                    const Center(
-                      child: Text(
-                        'Max duration is 24 hours.',
-                        style: TextStyle(
-                          color: Color(0xFF676A74),
-                          fontSize: 13,
+                      Center(
+                        child: Text(
+                          'Max duration is 24 hours.',
+                          style: TextStyle(
+                            color: dark ? _T.muted : const Color(0xFF676A74),
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
 
-                    const _SectionDivider(),
+                      const _SectionDivider(),
 
-                    // =================================================
-                    // SCHEDULE
-                    // =================================================
+                      // =========================================
+                      // SCHEDULE
+                      // =========================================
+                      _buildScheduleSection(),
 
-                    _buildScheduleSection(),
+                      const _SectionDivider(),
 
-                    const _SectionDivider(),
+                      // =========================================
+                      // TASK MODE
+                      // =========================================
+                      const _SectionTitle('Task Mode'),
 
-                    // =================================================
-                    // VERIFICATION RULES
-                    // =================================================
+                      const SizedBox(height: 10),
 
-                    const _SectionTitle(
-                      'Verification Rules',
-                    ),
+                      _buildTaskModeSelector(),
 
-                    const SizedBox(height: 10),
+                      const SizedBox(height: 18),
 
-                    _buildVerificationRules(),
+                      _buildModeSetup(),
 
-                    const _SectionDivider(),
+                      const _SectionDivider(),
 
-                    // =================================================
-                    // REFERENCE SETUP
-                    // =================================================
+                      // =========================================
+                      // ALARM
+                      // =========================================
+                      const _SectionTitle('Alarm Sound'),
 
-                    const _SectionTitle(
-                      'Reference Setup',
-                    ),
+                      const SizedBox(height: 9),
 
-                    const SizedBox(height: 3),
+                      _buildAlarmSound(),
 
-                    Text(
-                      _referenceDescription,
-                      style: TextStyle(
-                        color: dark
-                            ? _T.muted
-                            : const Color(0xFF555861),
-                        fontSize: 13,
-                      ),
-                    ),
+                      const SizedBox(height: 21),
 
-                    const SizedBox(height: 10),
+                      // =========================================
+                      // SENSITIVITY
+                      // =========================================
+                      const _SectionTitle('Sensitivity'),
 
-                    _buildReferenceSetup(),
+                      const SizedBox(height: 7),
 
-                    const _SectionDivider(),
+                      _buildSensitivity(),
 
-                    // =================================================
-                    // ALARM
-                    // =================================================
+                      const SizedBox(height: 24),
 
-                    const _SectionTitle(
-                      'Alarm Sound',
-                    ),
-
-                    const SizedBox(height: 9),
-
-                    _buildAlarmSound(),
-
-                    const SizedBox(height: 20),
-
-                    // =================================================
-                    // SENSITIVITY
-                    // =================================================
-
-                    const _SectionTitle(
-                      'Sensitivity',
-                    ),
-
-                    const SizedBox(height: 8),
-
-                    _buildSensitivity(),
-
-                    const SizedBox(height: 22),
-
-                    // =================================================
-                    // SAVE TASK
-                    // =================================================
-
-                    SizedBox(
-                      width: double.infinity,
-                      height: 58,
-                      child: ElevatedButton(
-                        onPressed: _saveTask,
-                        style: ElevatedButton.styleFrom(
-                          elevation: 0,
-                          backgroundColor: _C.red,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              14,
+                      // =========================================
+                      // SAVE
+                      // =========================================
+                      SizedBox(
+                        width: double.infinity,
+                        height: 58,
+                        child: ElevatedButton(
+                          onPressed: _saveTask,
+                          style: ElevatedButton.styleFrom(
+                            elevation: 0,
+                            backgroundColor: _C.red,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Save Task',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                         ),
-                        child: const Text(
-                          'Save Task',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
       ),
-    ),
+    );
+  }
+
+  // ===========================================================
+  // TASK MODE
+  // ===========================================================
+
+  Widget _buildModeSetup() {
+    switch (selectedMode) {
+      case TaskMode.focus:
+        return _buildFocusSetup();
+
+      case TaskMode.active:
+        return _buildActiveSetup();
+
+      case TaskMode.workout:
+        return _buildWorkoutSetup();
+    }
+  }
+
+  Widget _buildTaskModeSelector() {
+    return Row(
+      children: [
+        Expanded(
+          child: _TaskModeButton(
+            title: 'Focus',
+            subtitle: 'Stay in one area',
+            icon: Icons.chair_alt_outlined,
+            selected: selectedMode == TaskMode.focus,
+            onTap: () {
+              setState(() {
+                selectedMode = TaskMode.focus;
+              });
+            },
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: _TaskModeButton(
+            title: 'Active',
+            subtitle: 'Move around',
+            icon: Icons.cleaning_services_outlined,
+            selected: selectedMode == TaskMode.active,
+            onTap: () {
+              setState(() {
+                selectedMode = TaskMode.active;
+              });
+            },
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: _TaskModeButton(
+            title: 'Workout',
+            subtitle: 'Exercise / reps',
+            icon: Icons.fitness_center_rounded,
+            selected: selectedMode == TaskMode.workout,
+            onTap: () {
+              setState(() {
+                selectedMode = TaskMode.workout;
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===========================================================
+  // FOCUS SETUP
+  // ===========================================================
+
+  Widget _buildFocusSetup() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('Verification Rules'),
+
+        const SizedBox(height: 10),
+
+        _buildVerificationRules(),
+
+        const SizedBox(height: 18),
+
+        const _SectionTitle('Reference Setup'),
+
+        const SizedBox(height: 4),
+
+        Text(
+          _referenceDescription,
+          style: TextStyle(
+            color: widget.isDarkMode ? _T.muted : const Color(0xFF555861),
+            fontSize: 13,
+          ),
+        ),
+
+        const SizedBox(height: 10),
+
+        _buildReferenceSetup(),
+      ],
+    );
+  }
+
+  // ===========================================================
+  // ACTIVE SETUP
+  // ===========================================================
+
+  Widget _buildActiveSetup() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('Active Task Setup'),
+
+        const SizedBox(height: 6),
+
+        Text(
+          'Active mode monitors movement, inactivity, presence, and leaving the task area.',
+          style: TextStyle(
+            color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
+            fontSize: 12,
+            height: 1.35,
+          ),
+        ),
+
+        const SizedBox(height: 14),
+
+        _buildExpectedActivity(),
+
+        const Divider(),
+
+        _buildInactivityWarning(),
+
+        const Divider(),
+
+        _buildBriefExitAllowance(),
+
+        const Divider(),
+
+        _buildRequiredObjectScan(),
+
+        const SizedBox(height: 18),
+
+        _buildCameraSetup(),
+      ],
+    );
+  }
+
+  // ===========================================================
+  // WORKOUT SETUP
+  // ===========================================================
+
+  Widget _buildWorkoutSetup() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('Workout Setup'),
+
+        const SizedBox(height: 12),
+
+        _buildWorkoutMovementType(),
+
+        const SizedBox(height: 16),
+
+        _buildExerciseAndGoal(),
+
+        const SizedBox(height: 18),
+
+        const _SectionTitle('Optional Settings'),
+
+        const SizedBox(height: 10),
+
+        _buildWorkoutOptions(),
+
+        const SizedBox(height: 18),
+
+        _buildCameraSetup(),
+      ],
     );
   }
 
@@ -432,19 +996,14 @@ class _NewTaskPageState extends State<NewTaskPage> {
       children: [
         IconButton(
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(
-            minWidth: 42,
-            minHeight: 42,
-          ),
+          constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
           onPressed: () {
             Navigator.pop(context);
           },
           icon: Icon(
             Icons.arrow_back_ios_new_rounded,
             size: 25,
-            color: widget.isDarkMode
-                ? _T.text
-                : Colors.black,
+            color: widget.isDarkMode ? _T.text : Colors.black,
           ),
         ),
 
@@ -453,13 +1012,11 @@ class _NewTaskPageState extends State<NewTaskPage> {
         Text(
           'New Task',
           style: TextStyle(
-            color: widget.isDarkMode
-                ? _T.text
-                : Colors.black,
+            color: widget.isDarkMode ? _T.text : Colors.black,
             fontSize: 34,
             height: 1,
             fontWeight: FontWeight.w800,
-            letterSpacing: -0.7,
+            letterSpacing: -.7,
           ),
         ),
       ],
@@ -467,21 +1024,17 @@ class _NewTaskPageState extends State<NewTaskPage> {
   }
 
   // ===========================================================
-  // TASK NAME
+  // TASK NAME FIELD
   // ===========================================================
 
   Widget _buildTaskNameField() {
     return Container(
       height: 68,
       decoration: BoxDecoration(
-        color: widget.isDarkMode
-            ? _T.surface
-            : Colors.white,
+        color: widget.isDarkMode ? _T.surface : Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: widget.isDarkMode
-              ? _T.border
-              : const Color(0xFFCDD0D7),
+          color: widget.isDarkMode ? _T.border : const Color(0xFFCDD0D7),
           width: 1.2,
         ),
       ),
@@ -493,20 +1046,12 @@ class _NewTaskPageState extends State<NewTaskPage> {
               left: Radius.circular(14),
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                9,
-                7,
-                6,
-                7,
-              ),
+              padding: const EdgeInsets.fromLTRB(9, 7, 6, 7),
               child: Row(
                 children: [
-                  _TaskIconTile(
-                    type: selectedTaskIcon,
-                    size: 50,
-                  ),
+                  _TaskIconTile(type: selectedTaskIcon, size: 50),
 
-                  const SizedBox(width: 2),
+                  const SizedBox(width: 3),
 
                   Icon(
                     Icons.keyboard_arrow_down_rounded,
@@ -523,36 +1068,26 @@ class _NewTaskPageState extends State<NewTaskPage> {
           Container(
             width: 1,
             height: 40,
-            color: widget.isDarkMode
-                ? _T.border
-                : const Color(0xFFE1E2E6),
+            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E2E6),
           ),
 
           Expanded(
             child: TextField(
               controller: taskNameController,
               onChanged: _onTaskNameChanged,
-              textInputAction: TextInputAction.next,
               style: TextStyle(
-                color: widget.isDarkMode
-                    ? _T.text
-                    : Colors.black,
+                color: widget.isDarkMode ? _T.text : Colors.black,
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
               decoration: InputDecoration(
                 hintText: 'e.g. Study Session.',
                 hintStyle: TextStyle(
-                  color: widget.isDarkMode
-                      ? _T.muted
-                      : const Color(0xFF8D9099),
+                  color: widget.isDarkMode ? _T.muted : const Color(0xFF8D9099),
                   fontSize: 16,
-                  fontWeight: FontWeight.w400,
                 ),
                 border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(
+                contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 22,
                 ),
@@ -568,382 +1103,130 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // SMART ICON
   // ===========================================================
 
-  void _onTaskNameChanged(
-    String value,
-  ) {
+  void _onTaskNameChanged(String value) {
     if (taskIconManuallySelected) {
       return;
     }
 
-    final suggestion = _getSuggestedTaskIcon(
-      value,
-    );
+    final suggestion = _getSuggestedTaskIcon(value);
 
-    if (suggestion != selectedTaskIcon) {
-      setState(() {
-        selectedTaskIcon = suggestion;
-      });
+    if (suggestion == selectedTaskIcon) {
+      return;
     }
+
+    setState(() {
+      selectedTaskIcon = suggestion;
+    });
   }
 
-  TaskIconType _getSuggestedTaskIcon(
-    String taskName,
-  ) {
-    final text = taskName.toLowerCase().trim();
+  TaskIconType _getSuggestedTaskIcon(String taskName) {
+    final text = taskName.toLowerCase();
 
-    if (text.isEmpty) {
-      return TaskIconType.generic;
-    }
-
-    if (_containsAny(
-      text,
-      [
-        'study',
-        'studying',
-        'read',
-        'reading',
-        'book',
-        'books',
-        'homework',
-        'assignment',
-        'school',
-        'class',
-        'lecture',
-        'revision',
-        'revise',
-        'exam',
-        'quiz',
-        'test',
-        'learn',
-        'learning',
-        'notes',
-        'research',
-        'essay',
-      ],
-    )) {
+    if (_containsAny(text, [
+      'study',
+      'read',
+      'school',
+      'homework',
+      'exam',
+      'research',
+      'assignment',
+    ])) {
       return TaskIconType.study;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'sweep',
-        'sweeping',
-        'clean',
-        'cleaning',
-        'chore',
-        'chores',
-        'mop',
-        'mopping',
-        'dust',
-        'dusting',
-        'vacuum',
-        'vacuuming',
-        'tidy',
-        'tidying',
-        'scrub',
-        'scrubbing',
-        'sanitize',
-        'sanitizing',
-        'dishes',
-        'wash dishes',
-        'washing dishes',
-        'clean room',
-        'clean bedroom',
-        'clean kitchen',
-        'clean bathroom',
-      ],
-    )) {
+    if (_containsAny(text, [
+      'clean',
+      'sweep',
+      'mop',
+      'vacuum',
+      'dust',
+      'dishes',
+    ])) {
       return TaskIconType.cleaning;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'gym',
-        'workout',
-        'exercise',
-        'weights',
-        'weightlifting',
-        'lift',
-        'lifting',
-        'fitness',
-        'training',
-        'pushup',
-        'pushups',
-        'squat',
-        'squats',
-        'bench press',
-      ],
-    )) {
+    if (_containsAny(text, ['gym', 'workout', 'exercise', 'lift', 'fitness'])) {
       return TaskIconType.workout;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'run',
-        'running',
-        'jog',
-        'jogging',
-        'walk',
-        'walking',
-        'cardio',
-        'steps',
-        '5k',
-        '10k',
-      ],
-    )) {
+    if (_containsAny(text, ['run', 'jog', 'walk', 'cardio'])) {
       return TaskIconType.running;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'code',
-        'coding',
-        'program',
-        'programming',
-        'developer',
-        'computer',
-        'laptop',
-        'work',
-        'working',
-        'project',
-        'email',
-        'meeting',
-        'presentation',
-        'design',
-        'editing',
-        'website',
-        'app',
-        'software',
-      ],
-    )) {
+    if (_containsAny(text, [
+      'code',
+      'coding',
+      'computer',
+      'laptop',
+      'project',
+      'work',
+      'app',
+      'website',
+    ])) {
       return TaskIconType.computer;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'cook',
-        'cooking',
-        'bake',
-        'baking',
-        'meal',
-        'food',
-        'kitchen',
-        'dinner',
-        'lunch',
-        'breakfast',
-        'recipe',
-      ],
-    )) {
+    if (_containsAny(text, [
+      'cook',
+      'food',
+      'dinner',
+      'lunch',
+      'breakfast',
+      'bake',
+    ])) {
       return TaskIconType.cooking;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'laundry',
-        'wash clothes',
-        'washing clothes',
-        'fold clothes',
-        'folding clothes',
-        'washer',
-        'washing machine',
-        'iron clothes',
-        'ironing',
-      ],
-    )) {
+    if (_containsAny(text, ['laundry', 'wash clothes', 'fold clothes'])) {
       return TaskIconType.laundry;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'meditate',
-        'meditation',
-        'mindfulness',
-        'breathing',
-        'breathe',
-        'relax',
-        'relaxing',
-        'yoga',
-        'pray',
-        'prayer',
-      ],
-    )) {
+    if (_containsAny(text, ['meditate', 'meditation', 'yoga', 'pray'])) {
       return TaskIconType.meditation;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'garden',
-        'gardening',
-        'plant',
-        'plants',
-        'water plants',
-        'watering plants',
-        'flowers',
-        'lawn',
-        'yard',
-        'mow',
-        'mowing',
-      ],
-    )) {
+    if (_containsAny(text, ['garden', 'plant', 'yard', 'mow'])) {
       return TaskIconType.garden;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'sleep',
-        'sleeping',
-        'nap',
-        'napping',
-        'bedtime',
-        'go to bed',
-        'rest',
-      ],
-    )) {
+    if (_containsAny(text, ['sleep', 'nap', 'bedtime'])) {
       return TaskIconType.sleep;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'shop',
-        'shopping',
-        'groceries',
-        'grocery',
-        'buy',
-        'store',
-        'supermarket',
-      ],
-    )) {
+    if (_containsAny(text, ['shop', 'shopping', 'grocery', 'groceries'])) {
       return TaskIconType.shopping;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'drink water',
-        'water',
-        'hydrate',
-        'hydration',
-        'drink',
-      ],
-    )) {
+    if (_containsAny(text, ['water', 'hydrate'])) {
       return TaskIconType.hydration;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'medicine',
-        'medication',
-        'pill',
-        'pills',
-        'vitamin',
-        'vitamins',
-        'doctor',
-        'appointment',
-        'health',
-      ],
-    )) {
+    if (_containsAny(text, ['medicine', 'doctor', 'health'])) {
       return TaskIconType.health;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'music',
-        'song',
-        'sing',
-        'singing',
-        'guitar',
-        'piano',
-        'drums',
-        'instrument',
-      ],
-    )) {
+    if (_containsAny(text, ['music', 'guitar', 'piano', 'sing'])) {
       return TaskIconType.music;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'call',
-        'phone',
-        'telephone',
-        'facetime',
-        'video call',
-      ],
-    )) {
+    if (_containsAny(text, ['call', 'phone', 'facetime'])) {
       return TaskIconType.phone;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'dog',
-        'cat',
-        'pet',
-        'pets',
-        'feed dog',
-        'feed cat',
-        'walk dog',
-        'animal',
-      ],
-    )) {
+    if (_containsAny(text, ['dog', 'cat', 'pet'])) {
       return TaskIconType.pet;
     }
 
-    if (_containsAny(
-      text,
-      [
-        'shower',
-        'bath',
-        'brush teeth',
-        'teeth',
-        'skincare',
-        'skin care',
-        'self care',
-        'self-care',
-        'groom',
-        'grooming',
-      ],
-    )) {
+    if (_containsAny(text, ['shower', 'bath', 'skincare', 'brush teeth'])) {
       return TaskIconType.selfCare;
     }
 
     return TaskIconType.generic;
   }
 
-  bool _containsAny(
-    String text,
-    List<String> keywords,
-  ) {
-    for (final keyword in keywords) {
-      final normalized = keyword.toLowerCase();
-
-      if (normalized.contains(' ')) {
-        if (text.contains(normalized)) {
-          return true;
-        }
-
-        continue;
-      }
-
-      final expression = RegExp(
-        r'(^|\W)' +
-            RegExp.escape(normalized) +
-            r'($|\W)',
-      );
-
-      if (expression.hasMatch(text)) {
+  bool _containsAny(String text, List<String> values) {
+    for (final value in values) {
+      if (text.contains(value)) {
         return true;
       }
     }
@@ -958,185 +1241,117 @@ class _NewTaskPageState extends State<NewTaskPage> {
   void _showTaskIconPicker() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: widget.isDarkMode
-          ? _T.surface
-          : Colors.white,
+      backgroundColor: widget.isDarkMode ? _T.surface : Colors.white,
       isScrollControlled: true,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(26),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
       builder: (context) {
         return FractionallySizedBox(
-          heightFactor: .72,
+          heightFactor: .68,
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                4,
-                20,
-                20,
-              ),
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
                     'Choose Task Icon',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
                   ),
 
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 12),
 
-                  const Text(
-                    'TaskProof can choose automatically from the task name, or you can pick one yourself.',
-                    style: TextStyle(
-                      color: Color(0xFF777A84),
-                      fontSize: 13,
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: _C.red,
                     ),
-                  ),
-
-                  const SizedBox(height: 17),
-
-                  InkWell(
+                    title: const Text('Automatic'),
+                    subtitle: const Text(
+                      'Choose automatically from the task name.',
+                    ),
+                    trailing: !taskIconManuallySelected
+                        ? const Icon(Icons.check_rounded, color: _C.red)
+                        : null,
                     onTap: () {
                       setState(() {
                         taskIconManuallySelected = false;
 
-                        selectedTaskIcon =
-                            _getSuggestedTaskIcon(
+                        selectedTaskIcon = _getSuggestedTaskIcon(
                           taskNameController.text,
                         );
                       });
 
                       Navigator.pop(context);
                     },
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 13,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: !taskIconManuallySelected
-                            ? const Color(0xFFFFECEE)
-                            : const Color(0xFFF7F7F9),
-                        borderRadius: BorderRadius.circular(
-                          14,
-                        ),
-                        border: Border.all(
-                          color: !taskIconManuallySelected
-                              ? _C.red
-                              : const Color(0xFFE5E6EA),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: widget.isDarkMode
-                                  ? _T.selected
-                                  : Colors.white,
-                              borderRadius: BorderRadius.circular(
-                                11,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.auto_awesome_rounded,
-                              color: _C.red,
-                            ),
-                          ),
-
-                          const SizedBox(width: 12),
-
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Automatic',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                SizedBox(height: 2),
-                                Text(
-                                  'Changes automatically as you type.',
-                                  style: TextStyle(
-                                    color: Color(
-                                      0xFF777A84,
-                                    ),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          if (!taskIconManuallySelected)
-                            const Icon(
-                              Icons.check_rounded,
-                              color: _C.red,
-                            ),
-                        ],
-                      ),
-                    ),
                   ),
 
-                  const SizedBox(height: 20),
+                  const Divider(),
 
-                  const Text(
-                    'Choose manually',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
 
                   Expanded(
                     child: GridView.builder(
-                      physics: const BouncingScrollPhysics(),
                       itemCount: TaskIconType.values.length,
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
-                        mainAxisSpacing: 12,
-                        crossAxisSpacing: 12,
-                        childAspectRatio: .82,
-                      ),
-                      itemBuilder: (
-                        context,
-                        index,
-                      ) {
-                        final type =
-                            TaskIconType.values[index];
+                            crossAxisCount: 4,
+                            mainAxisSpacing: 10,
+                            crossAxisSpacing: 10,
+                            childAspectRatio: .88,
+                          ),
+                      itemBuilder: (context, index) {
+                        final type = TaskIconType.values[index];
 
                         final selected =
                             taskIconManuallySelected &&
-                                selectedTaskIcon == type;
+                            selectedTaskIcon == type;
 
-                        return _TaskIconPickerItem(
-                          type: type,
-                          selected: selected,
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(14),
                           onTap: () {
                             setState(() {
                               selectedTaskIcon = type;
+
                               taskIconManuallySelected = true;
                             });
 
                             Navigator.pop(context);
                           },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? const Color(0xFFFFECEE)
+                                  : widget.isDarkMode
+                                  ? _T.selected
+                                  : const Color(0xFFF7F7F9),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: selected
+                                    ? _C.red
+                                    : widget.isDarkMode
+                                    ? _T.border
+                                    : const Color(0xFFE5E6EA),
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(taskIconData(type), size: 29),
+
+                                const SizedBox(height: 6),
+
+                                Text(
+                                  taskIconLabel(type),
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                              ],
+                            ),
+                          ),
                         );
                       },
                     ),
@@ -1154,30 +1369,27 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // DURATION
   // ===========================================================
 
-  void _changeHours(
-    int value,
-  ) {
-    setState(() {
-      hours = value;
+  void _changeHours(int value) {
+    hours = value;
+    _hoursValue.value = value;
 
-      if (hours == 24) {
-        minutes = 0;
-        seconds = 0;
+    if (hours == 24) {
+      minutes = 0;
+      seconds = 0;
+      _minutesValue.value = 0;
+      _secondsValue.value = 0;
 
-        if (_minutesController.hasClients) {
-          _minutesController.jumpToItem(0);
-        }
-
-        if (_secondsController.hasClients) {
-          _secondsController.jumpToItem(0);
-        }
+      if (_minutesController.hasClients) {
+        _minutesController.jumpToItem(0);
       }
-    });
+
+      if (_secondsController.hasClients) {
+        _secondsController.jumpToItem(0);
+      }
+    }
   }
 
-  void _changeMinutes(
-    int value,
-  ) {
+  void _changeMinutes(int value) {
     if (hours == 24) {
       if (_minutesController.hasClients) {
         _minutesController.jumpToItem(0);
@@ -1186,14 +1398,11 @@ class _NewTaskPageState extends State<NewTaskPage> {
       return;
     }
 
-    setState(() {
-      minutes = value;
-    });
+    minutes = value;
+    _minutesValue.value = value;
   }
 
-  void _changeSeconds(
-    int value,
-  ) {
+  void _changeSeconds(int value) {
     if (hours == 24) {
       if (_secondsController.hasClients) {
         _secondsController.jumpToItem(0);
@@ -1202,77 +1411,66 @@ class _NewTaskPageState extends State<NewTaskPage> {
       return;
     }
 
-    setState(() {
-      seconds = value;
-    });
+    seconds = value;
+    _secondsValue.value = value;
   }
 
   Widget _buildDurationPicker() {
-    return LayoutBuilder(
-      builder: (
-        context,
-        constraints,
-      ) {
-        final timerWidth =
-            constraints.maxWidth < 350
-                ? constraints.maxWidth * .74
-                : 250.0;
-
-        return Center(
-          child: Container(
-            width: timerWidth,
-            height: 170,
-            padding: const EdgeInsets.symmetric(
-              horizontal: 8,
-              vertical: 10,
-            ),
-            decoration: BoxDecoration(
-              color: widget.isDarkMode
-                  ? _T.surface
-                  : Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: widget.isDarkMode
-                    ? _T.border
-                    : const Color(0xFFCACDD5),
-                width: 1.2,
+    return Center(
+      child: Container(
+        width: 255,
+        height: 170,
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 10),
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+            width: 1.2,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ValueListenableBuilder<int>(
+              valueListenable: _hoursValue,
+              builder: (context, value, child) => _DurationWheel(
+                controller: _hoursController,
+                selectedValue: value,
+                itemCount: 25,
+                label: 'HOURS',
+                onChanged: _changeHours,
               ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _DurationWheel(
-                  controller: _hoursController,
-                  selectedValue: hours,
-                  itemCount: 25,
-                  label: 'HOURS',
-                  onChanged: _changeHours,
-                ),
 
-                const _DurationColon(),
+            const _DurationColon(),
 
-                _DurationWheel(
-                  controller: _minutesController,
-                  selectedValue: minutes,
-                  itemCount: 60,
-                  label: 'MINUTES',
-                  onChanged: _changeMinutes,
-                ),
-
-                const _DurationColon(),
-
-                _DurationWheel(
-                  controller: _secondsController,
-                  selectedValue: seconds,
-                  itemCount: 60,
-                  label: 'SECONDS',
-                  onChanged: _changeSeconds,
-                ),
-              ],
+            ValueListenableBuilder<int>(
+              valueListenable: _minutesValue,
+              builder: (context, value, child) => _DurationWheel(
+                controller: _minutesController,
+                selectedValue: value,
+                itemCount: 60,
+                label: 'MINUTES',
+                onChanged: _changeMinutes,
+              ),
             ),
-          ),
-        );
-      },
+
+            const _DurationColon(),
+
+            ValueListenableBuilder<int>(
+              valueListenable: _secondsValue,
+              builder: (context, value, child) => _DurationWheel(
+                controller: _secondsController,
+                selectedValue: value,
+                itemCount: 60,
+                label: 'SECONDS',
+                onChanged: _changeSeconds,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1284,18 +1482,12 @@ class _NewTaskPageState extends State<NewTaskPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // =====================================================
-        // HEADER
-        // =====================================================
-
         Row(
           children: [
             Text(
               'Schedule',
               style: TextStyle(
-                color: widget.isDarkMode
-                    ? _T.text
-                    : Colors.black,
+                color: widget.isDarkMode ? _T.text : Colors.black,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
@@ -1306,27 +1498,19 @@ class _NewTaskPageState extends State<NewTaskPage> {
             Text(
               '(Optional)',
               style: TextStyle(
-                color: widget.isDarkMode
-                    ? _T.muted
-                    : const Color(0xFF777A84),
+                color: widget.isDarkMode ? _T.muted : const Color(0xFF777A84),
                 fontSize: 14,
-                fontWeight: FontWeight.w500,
               ),
             ),
 
             const Spacer(),
 
-            // When ON, the switch moves here.
             if (scheduleEnabled)
               Switch(
                 value: true,
                 onChanged: _setScheduleEnabled,
-                activeThumbColor: Colors.white,
                 activeTrackColor: _C.red,
-                trackOutlineColor:
-                    WidgetStateProperty.all(
-                  Colors.transparent,
-                ),
+                activeThumbColor: Colors.white,
               ),
           ],
         ),
@@ -1334,22 +1518,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
         const SizedBox(height: 10),
 
         AnimatedSwitcher(
-          duration: const Duration(
-            milliseconds: 220,
-          ),
-          transitionBuilder: (
-            child,
-            animation,
-          ) {
-            return SizeTransition(
-              sizeFactor: animation,
-              axisAlignment: -1,
-              child: FadeTransition(
-                opacity: animation,
-                child: child,
-              ),
-            );
-          },
+          duration: const Duration(milliseconds: 220),
           child: scheduleEnabled
               ? _buildScheduleEnabled()
               : _buildScheduleDisabled(),
@@ -1360,9 +1529,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   Widget _buildScheduleDisabled() {
     return Column(
-      key: const ValueKey(
-        'scheduleDisabled',
-      ),
+      key: const ValueKey('schedule-off'),
       children: [
         InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -1371,40 +1538,19 @@ class _NewTaskPageState extends State<NewTaskPage> {
           },
           child: Container(
             height: 62,
-            padding: const EdgeInsets.symmetric(
-              horizontal: 13,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 13),
             decoration: BoxDecoration(
-              color: widget.isDarkMode
-                  ? _T.surface
-                  : Colors.white,
+              color: widget.isDarkMode ? _T.surface : Colors.white,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: widget.isDarkMode
-                    ? _T.border
-                    : const Color(0xFFCACDD5),
-                width: 1.2,
+                color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
               ),
             ),
             child: Row(
               children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).brightness ==
-                          Brightness.dark
-                      ? const Color(0xFF28171B)
-                      : const Color(0xFFFFECEE),
-                    borderRadius: BorderRadius.circular(
-                      10,
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.calendar_month_outlined,
-                    color: _C.red,
-                    size: 23,
-                  ),
+                _PinkIcon(
+                  icon: Icons.calendar_month_outlined,
+                  dark: widget.isDarkMode,
                 ),
 
                 const SizedBox(width: 12),
@@ -1413,30 +1559,14 @@ class _NewTaskPageState extends State<NewTaskPage> {
                   child: Text(
                     'Schedule for later',
                     style: TextStyle(
-                      color: widget.isDarkMode
-                          ? _T.text
-                          : Colors.black,
+                      color: widget.isDarkMode ? _T.text : Colors.black,
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
 
-                Switch(
-                  value: false,
-                  onChanged: _setScheduleEnabled,
-                  activeThumbColor: Colors.white,
-                  activeTrackColor: _C.red,
-                  inactiveThumbColor: Colors.white,
-                  inactiveTrackColor:
-                      const Color(
-                    0xFFD8DAE1,
-                  ),
-                  trackOutlineColor:
-                      WidgetStateProperty.all(
-                    Colors.transparent,
-                  ),
-                ),
+                Switch(value: false, onChanged: _setScheduleEnabled),
               ],
             ),
           ),
@@ -1447,9 +1577,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
         Text(
           'Turn on to choose a date and time.',
           style: TextStyle(
-            color: widget.isDarkMode
-                ? _T.muted
-                : const Color(0xFF777A84),
+            color: widget.isDarkMode ? _T.muted : const Color(0xFF777A84),
             fontSize: 12,
           ),
         ),
@@ -1459,51 +1587,35 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   Widget _buildScheduleEnabled() {
     return Column(
-      key: const ValueKey(
-        'scheduleEnabled',
-      ),
+      key: const ValueKey('schedule-on'),
       children: [
         Container(
-          width: double.infinity,
           decoration: BoxDecoration(
-            color: widget.isDarkMode
-                ? _T.surface
-                : Colors.white,
+            color: widget.isDarkMode ? _T.surface : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: widget.isDarkMode
-                  ? _T.border
-                  : const Color(0xFFCACDD5),
-              width: 1.2,
+              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
             ),
           ),
           child: Column(
             children: [
-              _SchedulePickerRow(
+              _ScheduleRow(
                 icon: Icons.calendar_today_outlined,
                 title: 'Date',
                 subtitle: 'Choose a date',
                 value: _formattedScheduleDate,
+                dark: widget.isDarkMode,
                 onTap: _chooseScheduleDate,
               ),
 
-              const Padding(
-                padding: EdgeInsets.only(
-                  left: 64,
-                  right: 13,
-                ),
-                child: Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: Color(0xFFE2E3E7),
-                ),
-              ),
+              const Divider(height: 1),
 
-              _SchedulePickerRow(
+              _ScheduleRow(
                 icon: Icons.schedule_rounded,
                 title: 'Time',
                 subtitle: 'Choose a time',
                 value: _formattedScheduleTime,
+                dark: widget.isDarkMode,
                 onTap: _chooseScheduleTime,
               ),
             ],
@@ -1512,23 +1624,22 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
         const SizedBox(height: 9),
 
-        const Row(
+        Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
+            const Icon(
               Icons.notifications_none_rounded,
               color: _C.red,
               size: 17,
             ),
 
-            SizedBox(width: 5),
+            const SizedBox(width: 5),
 
             Flexible(
               child: Text(
                 "You'll be reminded when it's time to start.",
-                textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Color(0xFF676A74),
+                  color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
                   fontSize: 12,
                 ),
               ),
@@ -1539,27 +1650,16 @@ class _NewTaskPageState extends State<NewTaskPage> {
     );
   }
 
-  void _setScheduleEnabled(
-    bool enabled,
-  ) {
+  void _setScheduleEnabled(bool enabled) {
     setState(() {
       scheduleEnabled = enabled;
 
       if (enabled) {
-        final next = DateTime.now().add(
-          const Duration(hours: 1),
-        );
+        final next = DateTime.now().add(const Duration(hours: 1));
 
-        selectedScheduleDate ??= DateTime(
-          next.year,
-          next.month,
-          next.day,
-        );
+        selectedScheduleDate ??= DateTime(next.year, next.month, next.day);
 
-        selectedScheduleTime ??=
-            TimeOfDay.fromDateTime(
-          next,
-        );
+        selectedScheduleTime ??= TimeOfDay.fromDateTime(next);
       }
     });
   }
@@ -1567,101 +1667,42 @@ class _NewTaskPageState extends State<NewTaskPage> {
   Future<void> _chooseScheduleDate() async {
     final now = DateTime.now();
 
-    final today = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    );
+    final today = DateTime(now.year, now.month, now.day);
 
-    final picked = await showDatePicker(
+    final result = await showDatePicker(
       context: context,
-      initialDate:
-          selectedScheduleDate ?? today,
+      initialDate: selectedScheduleDate ?? today,
       firstDate: today,
-      lastDate: DateTime(
-        now.year + 3,
-        12,
-        31,
-      ),
-      builder: (
-        context,
-        child,
-      ) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: widget.isDarkMode
-                ? const ColorScheme.dark(
-                    primary: _C.red,
-                    onPrimary: Colors.white,
-                    surface: _T.surface,
-                    onSurface: _T.text,
-                  )
-                : const ColorScheme.light(
-                    primary: _C.red,
-                    onPrimary: Colors.white,
-                    onSurface: Colors.black,
-                  ),
-          ),
-          child: child!,
-        );
-      },
+      lastDate: DateTime(now.year + 3, 12, 31),
     );
 
-    if (picked == null || !mounted) {
+    if (result == null || !mounted) {
       return;
     }
 
     setState(() {
-      selectedScheduleDate = picked;
+      selectedScheduleDate = result;
     });
   }
 
   Future<void> _chooseScheduleTime() async {
-    final initial =
-        selectedScheduleTime ??
-            TimeOfDay.fromDateTime(
-              DateTime.now().add(
-                const Duration(hours: 1),
-              ),
-            );
-
-    final picked = await showTimePicker(
+    final result = await showTimePicker(
       context: context,
-      initialTime: initial,
-      builder: (
-        context,
-        child,
-      ) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: widget.isDarkMode
-                ? const ColorScheme.dark(
-                    primary: _C.red,
-                    onPrimary: Colors.white,
-                    surface: _T.surface,
-                    onSurface: _T.text,
-                  )
-                : const ColorScheme.light(
-                    primary: _C.red,
-                    onPrimary: Colors.white,
-                    onSurface: Colors.black,
-                  ),
-          ),
-          child: child!,
-        );
-      },
+      initialTime:
+          selectedScheduleTime ??
+          TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1))),
     );
 
-    if (picked == null || !mounted) {
+    if (result == null || !mounted) {
       return;
     }
 
     setState(() {
-      selectedScheduleTime = picked;
+      selectedScheduleTime = result;
     });
   }
 
-  DateTime? get _selectedScheduledDateTime {
+  DateTime? get _scheduledDateTime {
     if (!scheduleEnabled ||
         selectedScheduleDate == null ||
         selectedScheduleTime == null) {
@@ -1669,15 +1710,10 @@ class _NewTaskPageState extends State<NewTaskPage> {
     }
 
     final date = selectedScheduleDate!;
+
     final time = selectedScheduleTime!;
 
-    return DateTime(
-      date.year,
-      date.month,
-      date.day,
-      time.hour,
-      time.minute,
-    );
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
   String get _formattedScheduleDate {
@@ -1689,33 +1725,13 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
     final now = DateTime.now();
 
-    final today = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    );
-
-    final selected = DateTime(
-      date.year,
-      date.month,
-      date.day,
-    );
-
-    if (DateUtils.isSameDay(
-      selected,
-      today,
-    )) {
+    if (DateUtils.isSameDay(date, now)) {
       return 'Today, ${_monthName(date.month)} ${date.day}';
     }
 
-    final tomorrow = today.add(
-      const Duration(days: 1),
-    );
+    final tomorrow = now.add(const Duration(days: 1));
 
-    if (DateUtils.isSameDay(
-      selected,
-      tomorrow,
-    )) {
+    if (DateUtils.isSameDay(date, tomorrow)) {
       return 'Tomorrow, ${_monthName(date.month)} ${date.day}';
     }
 
@@ -1729,11 +1745,9 @@ class _NewTaskPageState extends State<NewTaskPage> {
       return 'Choose time';
     }
 
-    int hour = time.hour;
+    var hour = time.hour;
 
-    final suffix = hour >= 12
-        ? 'PM'
-        : 'AM';
+    final suffix = hour >= 12 ? 'PM' : 'AM';
 
     hour %= 12;
 
@@ -1741,19 +1755,1299 @@ class _NewTaskPageState extends State<NewTaskPage> {
       hour = 12;
     }
 
-    final minute = time.minute
-        .toString()
-        .padLeft(
-          2,
-          '0',
-        );
-
-    return '$hour:$minute $suffix';
+    return '$hour:${time.minute.toString().padLeft(2, '0')} $suffix';
   }
 
-  String _monthName(
-    int month,
-  ) {
+  // ===========================================================
+  // VERIFICATION RULES
+  // ===========================================================
+
+  // ===========================================================
+  // ACTIVE MODE UI
+  // ===========================================================
+
+  Widget _buildExpectedActivity() {
+    return _ModeSettingRow(
+      icon: Icons.bar_chart_rounded,
+      title: 'Expected Activity',
+      subtitle: 'How much movement is expected for this task.',
+      trailing: DropdownButton<ActivityLevel>(
+        value: activityLevel,
+        underline: const SizedBox.shrink(),
+        items: const [
+          DropdownMenuItem(value: ActivityLevel.light, child: Text('Light')),
+          DropdownMenuItem(
+            value: ActivityLevel.moderate,
+            child: Text('Moderate'),
+          ),
+          DropdownMenuItem(value: ActivityLevel.high, child: Text('High')),
+        ],
+        onChanged: (value) {
+          if (value == null) {
+            return;
+          }
+
+          setState(() {
+            activityLevel = value;
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildInactivityWarning() {
+    const options = [
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+      Duration(minutes: 5),
+    ];
+
+    return _ModeSettingRow(
+      icon: Icons.schedule_rounded,
+      title: 'Inactivity Warning',
+      subtitle:
+          'Warn me if activity stays below the expected level for this long.',
+      trailing: DropdownButton<Duration>(
+        value: inactivityWarning,
+        underline: const SizedBox.shrink(),
+        items: options.map((duration) {
+          return DropdownMenuItem(
+            value: duration,
+            child: Text(_durationOptionLabel(duration)),
+          );
+        }).toList(),
+        onChanged: (value) {
+          if (value == null) {
+            return;
+          }
+
+          setState(() {
+            inactivityWarning = value;
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildBriefExitAllowance() {
+    const options = [
+      Duration.zero,
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+    ];
+
+    return _ModeSettingRow(
+      icon: Icons.exit_to_app_rounded,
+      title: 'Brief Exit Allowance',
+      subtitle: 'Allow a short exit without immediately triggering a warning.',
+      trailing: DropdownButton<Duration>(
+        value: briefExitAllowance,
+        underline: const SizedBox.shrink(),
+        items: options.map((duration) {
+          return DropdownMenuItem(
+            value: duration,
+            child: Text(
+              duration == Duration.zero
+                  ? 'None'
+                  : _durationOptionLabel(duration),
+            ),
+          );
+        }).toList(),
+        onChanged: (value) {
+          if (value == null) {
+            return;
+          }
+
+          setState(() {
+            briefExitAllowance = value;
+          });
+        },
+      ),
+    );
+  }
+
+  Future<void> _openObjectScanner() async {
+    if (!MlKitCameraImageConverter.supported) {
+      _showMessage('3D object scanning must be used on Android or iPhone.');
+
+      return;
+    }
+
+    final result = await Navigator.push<List<SavedObjectScan>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ObjectScanLibraryPage(
+          isDarkMode: widget.isDarkMode,
+          initialSelectedIds: selectedObjectScans
+              .map((scan) => scan.id)
+              .toList(),
+        ),
+      ),
+    );
+
+    if (result == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      selectedObjectScans
+        ..clear()
+        ..addAll(result.take(3));
+    });
+  }
+
+  Widget _buildRequiredObjectScan() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ModeSettingRow(
+          icon: Icons.view_in_ar_rounded,
+          title: 'Required Object / Tool',
+          subtitle: selectedObjectScans.isEmpty
+              ? 'Optional — scan an object or tool that must appear.'
+              : '${selectedObjectScans.length}/3 saved objects selected.',
+          trailing: OutlinedButton.icon(
+            onPressed: _openObjectScanner,
+            icon: const Icon(Icons.view_in_ar_rounded, size: 18),
+            label: const Text('3D Scan'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _C.red,
+              side: const BorderSide(color: _C.red),
+            ),
+          ),
+        ),
+
+        if (selectedObjectScans.isNotEmpty) ...[
+          const SizedBox(height: 10),
+
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: selectedObjectScans
+                .map(
+                  (scan) => Chip(
+                    label: Text(scan.name),
+                    deleteIcon: const Icon(Icons.close_rounded, size: 17),
+                    onDeleted: () {
+                      setState(() {
+                        selectedObjectScans.removeWhere(
+                          (item) => item.id == scan.id,
+                        );
+                      });
+                    },
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _durationOptionLabel(Duration duration) {
+    if (duration.inMinutes >= 1 && duration.inSeconds % 60 == 0) {
+      final minutes = duration.inMinutes;
+
+      return '$minutes ${minutes == 1 ? 'minute' : 'minutes'}';
+    }
+
+    return '${duration.inSeconds} seconds';
+  }
+
+  // ===========================================================
+  // VERIFICATION RULES
+  // ===========================================================
+
+  void _toggleStayInPosition() {
+    if (stayInPosition) {
+      setState(() {
+        stayInPosition = false;
+      });
+
+      return;
+    }
+
+    if (objectInFrame && !isPro) {
+      _showUpgradeDialog();
+      return;
+    }
+
+    setState(() {
+      stayInPosition = true;
+    });
+  }
+
+  void _toggleObjectInFrame() {
+    if (objectInFrame) {
+      setState(() {
+        objectInFrame = false;
+      });
+
+      return;
+    }
+
+    if (stayInPosition && !isPro) {
+      _showUpgradeDialog();
+      return;
+    }
+
+    setState(() {
+      objectInFrame = true;
+    });
+  }
+
+  Widget _buildVerificationRules() {
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+            ),
+          ),
+          child: Column(
+            children: [
+              _VerificationRow(
+                icon: Icons.person_rounded,
+                title: 'Stay in Position',
+                subtitle:
+                    'Warn for major posture changes, looking away, or leaving frame.',
+                checked: stayInPosition,
+                dark: widget.isDarkMode,
+                onTap: _toggleStayInPosition,
+              ),
+
+              const Divider(height: 1),
+
+              _VerificationRow(
+                icon: Icons.inventory_2_outlined,
+                title: 'Object Must Be in Frame',
+                subtitle: 'Keep the selected object visible in the camera.',
+                checked: objectInFrame,
+                dark: widget.isDarkMode,
+                onTap: _toggleObjectInFrame,
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        InkWell(
+          onTap: _showUpgradeDialog,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: widget.isDarkMode ? _T.surface : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+              ),
+            ),
+            child: Row(
+              children: [
+                _PinkIcon(
+                  icon: Icons.verified_user_outlined,
+                  dark: widget.isDarkMode,
+                ),
+
+                const SizedBox(width: 12),
+
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'Dual Verification',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+
+                          SizedBox(width: 7),
+
+                          _ProBadge(),
+                        ],
+                      ),
+
+                      SizedBox(height: 3),
+
+                      Text(
+                        'Use position and object verification together.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF777A84),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const Icon(
+                  Icons.lock_outline_rounded,
+                  color: Color(0xFF777A84),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===========================================================
+  // REFERENCE
+  // ===========================================================
+
+  String get _referenceDescription {
+    if (stayInPosition) {
+      if (referencePose != null) {
+        return 'Your reference pose has been captured. Tap it to retake.';
+      }
+
+      return 'Capture the position you want TaskProof to enforce.';
+    }
+
+    if (objectInFrame) {
+      return 'Capture the objects that must remain visible.';
+    }
+
+    return 'Select a verification rule first.';
+  }
+
+  Widget _buildReferenceSetup() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+        ),
+      ),
+      child: Column(
+        children: [
+          if (stayInPosition)
+            _ReferenceRow(
+              icon: referencePose != null
+                  ? Icons.check_circle_rounded
+                  : Icons.photo_camera_outlined,
+              title: 'Reference Position',
+              subtitle: referencePose != null
+                  ? 'Captured — tap to retake'
+                  : 'Capture your normal body and head position.',
+              complete: referencePose != null,
+              dark: widget.isDarkMode,
+              onTap: _captureReferencePosition,
+            ),
+
+          if (stayInPosition && objectInFrame)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 11),
+              child: Divider(height: 1),
+            ),
+
+          if (objectInFrame)
+            _ReferenceRow(
+              icon: Icons.add_a_photo_outlined,
+              title: 'Required Objects',
+              subtitle: '$capturedObjects/3 captured',
+              complete: capturedObjects > 0,
+              dark: widget.isDarkMode,
+              onTap: _captureObject,
+            ),
+
+          if (!stayInPosition && !objectInFrame)
+            const Padding(
+              padding: EdgeInsets.all(22),
+              child: Text('Choose a verification rule above.'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================
+  // CAPTURE REFERENCE POSITION
+  // ===========================================================
+
+  Future<void> _captureReferencePosition() async {
+    if (!MlKitCameraImageConverter.supported) {
+      _showMessage(
+        'Position verification must be tested on an Android or iPhone device, not Chrome.',
+      );
+
+      return;
+    }
+
+    final result = await Navigator.push<PoseReference>(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            ReferencePositionPage(isDarkMode: widget.isDarkMode),
+      ),
+    );
+
+    if (result == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      referencePose = result;
+    });
+
+    _showMessage('Reference position captured.');
+  }
+
+  void _captureObject() {
+    if (capturedObjects >= 3) {
+      return;
+    }
+
+    setState(() {
+      capturedObjects++;
+    });
+
+    _showMessage('$capturedObjects/3 objects captured.');
+  }
+
+  // ===========================================================
+  // ALARM
+  // ===========================================================
+
+  // ===========================================================
+  // WORKOUT MODE UI
+  // ===========================================================
+
+  void _selectWorkoutMovementType(WorkoutMovementType type) {
+    setState(() {
+      workoutMovementType = type;
+
+      switch (type) {
+        case WorkoutMovementType.repetitions:
+          selectedExercise = WorkoutExercise.pushUps;
+          break;
+
+        case WorkoutMovementType.hold:
+          selectedExercise = WorkoutExercise.plank;
+          break;
+
+        case WorkoutMovementType.continuous:
+          selectedExercise = WorkoutExercise.runningInPlace;
+          break;
+      }
+    });
+  }
+
+  Widget _buildWorkoutMovementType() {
+    return Row(
+      children: [
+        Expanded(
+          child: _WorkoutTypeButton(
+            title: 'Repetitions',
+            subtitle: 'Count reps',
+            icon: Icons.sync_rounded,
+            selected: workoutMovementType == WorkoutMovementType.repetitions,
+            onTap: () {
+              _selectWorkoutMovementType(WorkoutMovementType.repetitions);
+            },
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: _WorkoutTypeButton(
+            title: 'Hold',
+            subtitle: 'Hold a position',
+            icon: Icons.timer_outlined,
+            selected: workoutMovementType == WorkoutMovementType.hold,
+            onTap: () {
+              _selectWorkoutMovementType(WorkoutMovementType.hold);
+            },
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: _WorkoutTypeButton(
+            title: 'Continuous',
+            subtitle: 'Stay active',
+            icon: Icons.directions_run_rounded,
+            selected: workoutMovementType == WorkoutMovementType.continuous,
+            onTap: () {
+              _selectWorkoutMovementType(WorkoutMovementType.continuous);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<WorkoutExercise> get _availableWorkoutExercises {
+    switch (workoutMovementType) {
+      case WorkoutMovementType.repetitions:
+        return const [
+          WorkoutExercise.pushUps,
+          WorkoutExercise.squats,
+          WorkoutExercise.jumpingJacks,
+          WorkoutExercise.lunges,
+          WorkoutExercise.sitUps,
+          WorkoutExercise.burpees,
+          WorkoutExercise.mountainClimbers,
+          WorkoutExercise.highKnees,
+        ];
+
+      case WorkoutMovementType.hold:
+        return const [WorkoutExercise.plank, WorkoutExercise.wallSit];
+
+      case WorkoutMovementType.continuous:
+        return const [
+          WorkoutExercise.runningInPlace,
+          WorkoutExercise.jumpRope,
+          WorkoutExercise.highKnees,
+          WorkoutExercise.jumpingJacks,
+        ];
+    }
+  }
+
+  String _workoutExerciseLabel(WorkoutExercise exercise) {
+    switch (exercise) {
+      case WorkoutExercise.pushUps:
+        return 'Push-ups';
+
+      case WorkoutExercise.squats:
+        return 'Squats';
+
+      case WorkoutExercise.jumpingJacks:
+        return 'Jumping Jacks';
+
+      case WorkoutExercise.lunges:
+        return 'Lunges';
+
+      case WorkoutExercise.sitUps:
+        return 'Sit-ups';
+
+      case WorkoutExercise.burpees:
+        return 'Burpees';
+
+      case WorkoutExercise.mountainClimbers:
+        return 'Mountain Climbers';
+
+      case WorkoutExercise.highKnees:
+        return 'High Knees';
+
+      case WorkoutExercise.plank:
+        return 'Plank';
+
+      case WorkoutExercise.wallSit:
+        return 'Wall Sit';
+
+      case WorkoutExercise.runningInPlace:
+        return 'Running in Place';
+
+      case WorkoutExercise.jumpRope:
+        return 'Jump Rope';
+    }
+  }
+
+  IconData _workoutExerciseIcon(WorkoutExercise exercise) {
+    switch (exercise) {
+      case WorkoutExercise.runningInPlace:
+      case WorkoutExercise.highKnees:
+        return Icons.directions_run_rounded;
+
+      case WorkoutExercise.jumpRope:
+      case WorkoutExercise.jumpingJacks:
+        return Icons.accessibility_new_rounded;
+
+      default:
+        return Icons.fitness_center_rounded;
+    }
+  }
+
+  Widget _buildExerciseAndGoal() {
+    final exercises = _availableWorkoutExercises;
+    const durationGoals = [
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+      Duration(minutes: 5),
+      Duration(minutes: 10),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Exercise',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
+
+        const SizedBox(height: 8),
+
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<WorkoutExercise>(
+              value: selectedExercise,
+              isExpanded: true,
+              items: exercises.map((exercise) {
+                return DropdownMenuItem(
+                  value: exercise,
+                  child: Row(
+                    children: [
+                      Icon(
+                        _workoutExerciseIcon(exercise),
+                        size: 23,
+                        color: _C.red,
+                      ),
+
+                      const SizedBox(width: 10),
+
+                      Text(_workoutExerciseLabel(exercise)),
+                    ],
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value == null) {
+                  return;
+                }
+
+                setState(() {
+                  selectedExercise = value;
+                });
+              },
+            ),
+          ),
+        ),
+
+        if (workoutMovementType == WorkoutMovementType.repetitions) ...[
+          const SizedBox(height: 18),
+
+          const Text(
+            'Goal (Repetitions)',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+
+          const SizedBox(height: 8),
+
+          Container(
+            height: 60,
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () {
+                    if (workoutRepGoal <= 1) {
+                      return;
+                    }
+
+                    setState(() {
+                      workoutRepGoal--;
+                    });
+                  },
+                  icon: const Icon(Icons.remove_rounded),
+                ),
+
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '$workoutRepGoal',
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const Text(
+                        'REPS',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFF777A84),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      workoutRepGoal++;
+                    });
+                  },
+                  icon: const Icon(Icons.add_rounded),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 18),
+          Text(
+            workoutMovementType == WorkoutMovementType.hold
+                ? 'Hold Goal'
+                : 'Activity Goal',
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<Duration>(
+                value: workoutTargetDuration,
+                isExpanded: true,
+                items: durationGoals
+                    .map(
+                      (duration) => DropdownMenuItem(
+                        value: duration,
+                        child: Text(_durationOptionLabel(duration)),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => workoutTargetDuration = value);
+                },
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildWorkoutOptions() {
+    const restOptions = [
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+        ),
+      ),
+      child: Column(
+        children: [
+          SwitchListTile(
+            value: workoutFormChecking,
+            onChanged: isPro
+                ? (value) {
+                    setState(() {
+                      workoutFormChecking = value;
+                    });
+                  }
+                : (_) {
+                    _showMessage('Form Checking is a TaskProof Pro feature.');
+                  },
+            secondary: const Icon(Icons.person_search_rounded, color: _C.red),
+            title: const Row(
+              children: [
+                Text(
+                  'Form Checking',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                SizedBox(width: 7),
+                _ProBadge(),
+              ],
+            ),
+            subtitle: const Text('Get extra feedback on your form.'),
+          ),
+
+          if (workoutMovementType != WorkoutMovementType.repetitions) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.timer_outlined, size: 24),
+
+                  const SizedBox(width: 14),
+
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Rest Limit',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          'Maximum rest time between exercise activity.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF777A84),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  DropdownButton<Duration>(
+                    value: workoutRestLimit,
+                    underline: const SizedBox.shrink(),
+                    items: restOptions.map((duration) {
+                      return DropdownMenuItem(
+                        value: duration,
+                        child: Text(_durationOptionLabel(duration)),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+
+                      setState(() {
+                        workoutRestLimit = value;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraSetup() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('Camera Setup'),
+
+        const SizedBox(height: 8),
+
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+            ),
+          ),
+          child: Row(
+            children: [
+              _PinkIcon(
+                icon: Icons.photo_camera_outlined,
+                dark: widget.isDarkMode,
+              ),
+
+              const SizedBox(width: 12),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Position Camera',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+
+                    SizedBox(height: 2),
+
+                    Text(
+                      'Place the camera so the required area is visible.',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF777A84)),
+                    ),
+                  ],
+                ),
+              ),
+
+              OutlinedButton.icon(
+                onPressed: _openCameraPreview,
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text('Preview'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _C.red,
+                  side: const BorderSide(color: _C.red),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openCameraPreview() async {
+    switch (selectedMode) {
+      case TaskMode.active:
+        if (!MlKitCameraImageConverter.supported) {
+          _showMessage('Active camera preview requires Android or iPhone.');
+          return;
+        }
+
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                ActiveCameraPreviewPage(isDarkMode: widget.isDarkMode),
+          ),
+        );
+        return;
+
+      case TaskMode.workout:
+        if (!MlKitCameraImageConverter.supported) {
+          _showMessage('Workout camera preview requires Android or iPhone.');
+          return;
+        }
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => WorkoutCameraPreviewPage(
+              isDarkMode: widget.isDarkMode,
+              exercise: selectedExercise,
+              movementType: workoutMovementType,
+              sensitivity: sensitivity,
+            ),
+          ),
+        );
+        return;
+
+      case TaskMode.focus:
+        await _captureReferencePosition();
+        return;
+    }
+  }
+
+  // ===========================================================
+  // ALARM
+  // ===========================================================
+
+  Widget _buildAlarmSound() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: _selectAlarm,
+      child: Container(
+        height: 58,
+        padding: const EdgeInsets.symmetric(horizontal: 13),
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+          ),
+        ),
+        child: Row(
+          children: [
+            _PinkIcon(icon: Icons.music_note_rounded, dark: widget.isDarkMode),
+
+            const SizedBox(width: 13),
+
+            Expanded(
+              child: Text(selectedAlarm, style: const TextStyle(fontSize: 16)),
+            ),
+
+            const Icon(Icons.chevron_right_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _selectAlarm() {
+    const alarms = ['Default Alarm', 'Pulse', 'Bell', 'Alert'];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: widget.isDarkMode ? _T.surface : Colors.white,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: alarms.map((alarm) {
+                final selected = selectedAlarm == alarm;
+
+                return ListTile(
+                  title: Text(alarm),
+                  trailing: selected
+                      ? const Icon(Icons.check_rounded, color: _C.red)
+                      : null,
+                  onTap: () {
+                    setState(() {
+                      selectedAlarm = alarm;
+                    });
+
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ===========================================================
+  // SENSITIVITY
+  // ===========================================================
+
+  Widget _buildSensitivity() {
+    return ValueListenableBuilder<double>(
+      valueListenable: _sensitivityValue,
+      builder: (context, value, child) {
+        return Column(
+          children: [
+            Slider(
+              value: value,
+              min: 0,
+              max: 1,
+              activeColor: _C.red,
+              onChanged: (nextValue) {
+                sensitivity = nextValue;
+                _sensitivityValue.value = nextValue;
+              },
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 3),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Low', style: TextStyle(fontSize: 12)),
+                  Text('Medium', style: TextStyle(fontSize: 12)),
+                  Text('High', style: TextStyle(fontSize: 12)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _sensitivityDescription,
+                style: TextStyle(
+                  color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String get _sensitivityDescription {
+    if (selectedMode == TaskMode.active) {
+      if (sensitivity < .34) {
+        return 'Low: requires clearer movement changes before TaskProof reacts.';
+      }
+
+      if (sensitivity < .67) {
+        return 'Medium: balanced movement and inactivity detection.';
+      }
+
+      return 'High: notices smaller activity changes more quickly.';
+    }
+
+    if (selectedMode == TaskMode.workout) {
+      if (sensitivity < .34) {
+        return 'Low: more forgiving workout movement detection.';
+      }
+
+      if (sensitivity < .67) {
+        return 'Medium: balanced exercise movement detection.';
+      }
+
+      return 'High: detects smaller exercise movement differences more strictly.';
+    }
+
+    if (sensitivity < .34) {
+      return 'Low: only major changes should trigger the warning.';
+    }
+
+    if (sensitivity < .67) {
+      return 'Medium: allows normal movement but catches major posture changes and sustained looking away.';
+    }
+
+    return 'High: keeps you much closer to the reference pose.';
+  }
+  // ===========================================================
+  // PRO DIALOG
+  // ===========================================================
+
+  void _showUpgradeDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Dual Verification'),
+        content: const Text(
+          'Using Stay in Position and Object Must Be in Frame together is a TaskProof Pro feature.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: const Text('Not now'),
+          ),
+
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _C.red),
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: const Text('View Pro'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================
+  // SAVE TASK
+  // ===========================================================
+
+  void _saveTask() {
+    final name = taskNameController.text.trim();
+
+    if (name.isEmpty) {
+      _showMessage('Enter a task name first.');
+
+      return;
+    }
+
+    if (hours == 0 && minutes == 0 && seconds == 0) {
+      _showMessage('Task duration must be longer than 0 seconds.');
+
+      return;
+    }
+
+    if (selectedMode == TaskMode.focus && !stayInPosition && !objectInFrame) {
+      _showMessage('Choose at least one verification rule.');
+
+      return;
+    }
+
+    DateTime? scheduledFor;
+
+    if (scheduleEnabled) {
+      scheduledFor = _scheduledDateTime;
+
+      if (scheduledFor == null) {
+        _showMessage('Choose a schedule date and time.');
+
+        return;
+      }
+
+      if (!scheduledFor.isAfter(DateTime.now())) {
+        _showMessage('Choose a scheduled time in the future.');
+
+        return;
+      }
+    }
+
+    final task = TaskData(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+
+      name: name,
+
+      icon: selectedTaskIcon,
+
+      mode: selectedMode,
+
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+
+      stayInPosition: selectedMode == TaskMode.focus ? stayInPosition : false,
+
+      objectInFrame: selectedMode == TaskMode.focus ? objectInFrame : false,
+
+      alarm: selectedAlarm,
+
+      sensitivity: sensitivity,
+
+      poseReference: selectedMode == TaskMode.focus ? referencePose : null,
+
+      activeConfig: selectedMode == TaskMode.active
+          ? ActiveTaskConfig(
+              activityLevel: activityLevel,
+              inactivityWarning: inactivityWarning,
+              briefExitAllowance: briefExitAllowance,
+              requiredObjectIds: selectedObjectScans
+                  .map((scan) => scan.id)
+                  .toList(),
+            )
+          : null,
+
+      workoutConfig: selectedMode == TaskMode.workout
+          ? WorkoutTaskConfig(
+              movementType: workoutMovementType,
+              exercise: selectedExercise,
+              repGoal: workoutRepGoal,
+              targetDuration: workoutTargetDuration,
+              restLimit: workoutRestLimit,
+              formChecking: workoutFormChecking,
+            )
+          : null,
+
+      status: scheduleEnabled ? TaskStatus.scheduled : TaskStatus.ready,
+
+      scheduledFor: scheduledFor,
+    );
+
+    Navigator.pop(context, task);
+  }
+
+  // ===========================================================
+  // HELPERS
+  // ============================================================================================
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _monthName(int month) {
     const months = [
       'January',
       'February',
@@ -1771,766 +3065,578 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
     return months[month - 1];
   }
+}
+
+// =============================================================
+// REFERENCE POSITION CAMERA PAGE
+// =============================================================
+
+class ReferencePositionPage extends StatefulWidget {
+  const ReferencePositionPage({super.key, required this.isDarkMode});
+
+  final bool isDarkMode;
+
+  @override
+  State<ReferencePositionPage> createState() => _ReferencePositionPageState();
+}
+
+class _ReferencePositionPageState extends State<ReferencePositionPage>
+    with WidgetsBindingObserver {
+  CameraController? _controller;
+
+  Widget? _cameraPreview;
+
+  CameraDescription? _camera;
+
+  PoseDetector? _poseDetector;
+
+  FaceDetector? _faceDetector;
+
+  bool _initializing = true;
+
+  bool _startingCamera = false;
+
+  bool _processing = false;
+
+  bool _acceptFrames = false;
+
+  bool _lifecycleActive = true;
+
+  bool _disposed = false;
+
+  Future<void>? _activeAnalysis;
+
+  Future<void>? _cameraDisposal;
+
+  Future<void>? _shutdownTask;
+
+  DateTime _lastProcessed = DateTime.fromMillisecondsSinceEpoch(0);
+
+  DateTime _lastFaceProcessed = DateTime.fromMillisecondsSinceEpoch(0);
+
+  List<Face> _cachedFaces = const [];
+
+  PoseReference? _currentPose;
+
+  final ValueNotifier<bool> _positionDetected = ValueNotifier(false);
+
+  String _status = 'Preparing camera...';
 
   // ===========================================================
-  // VERIFICATION
+  // INIT
   // ===========================================================
 
-  bool get _dualVerificationActive {
-    return stayInPosition && objectInFrame;
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addObserver(this);
+
+    _initialize();
   }
 
-  void _toggleStayInPosition() {
-    // Turning the currently-selected method off is always allowed.
-    if (stayInPosition) {
-      setState(() {
-        stayInPosition = false;
-      });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+
+    _disposed = true;
+    _lifecycleActive = false;
+    _acceptFrames = false;
+
+    unawaited(_shutdown());
+
+    _positionDetected.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _lifecycleActive = false;
+      _acceptFrames = false;
+      _setCurrentPose(null);
+      unawaited(_disposeCamera());
       return;
     }
 
-    // Free users can use either method, but combining both is Pro.
-    if (objectInFrame && !isPro) {
-      _showUpgradeDialog(
-        attemptedMethod: 'Stay in Position',
-      );
-      return;
+    if (state == AppLifecycleState.resumed) {
+      _lifecycleActive = true;
+      unawaited(_initializeCamera());
     }
-
-    setState(() {
-      stayInPosition = true;
-    });
   }
 
-  void _toggleObjectInFrame() {
-    // Turning the currently-selected method off is always allowed.
-    if (objectInFrame) {
-      setState(() {
-        objectInFrame = false;
-      });
-      return;
-    }
-
-    // Free users can use either method, but combining both is Pro.
-    if (stayInPosition && !isPro) {
-      _showUpgradeDialog(
-        attemptedMethod: 'Object Must Be in Frame',
-      );
-      return;
-    }
-
-    setState(() {
-      objectInFrame = true;
-    });
-  }
-
-  Widget _buildVerificationRules() {
-    return Column(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: widget.isDarkMode
-                ? _T.surface
-                : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: widget.isDarkMode
-                  ? _T.border
-                  : const Color(0xFFCACDD5),
-              width: 1.2,
-            ),
-          ),
-          child: Column(
-            children: [
-              _VerificationRow(
-                iconType: _VerificationIconType.person,
-                title: 'Stay in Position',
-                subtitle:
-                    'Keep yourself within your reference position.',
-                checked: stayInPosition,
-                onTap: _toggleStayInPosition,
-              ),
-
-              const _InnerDivider(),
-
-              _VerificationRow(
-                iconType: _VerificationIconType.object,
-                title: 'Object Must Be in Frame',
-                subtitle:
-                    'Keep the selected object visible in the frame.',
-                checked: objectInFrame,
-                onTap: _toggleObjectInFrame,
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        // This is a status/footer, not a third selectable verification rule.
-        _DualVerificationFooter(
-          active: _dualVerificationActive,
-          isPro: isPro,
-        ),
-      ],
-    );
-  }
-
-  // ===========================================================
-  // REFERENCE SETUP
-  // ===========================================================
-
-  String get _referenceDescription {
-    if (stayInPosition && objectInFrame) {
-      return 'Capture both your position and required objects.';
-    }
-
-    if (stayInPosition) {
-      return 'Capture the position you should maintain.';
-    }
-
-    if (objectInFrame) {
-      return 'Capture the objects that must remain in frame.';
-    }
-
-    return 'Select a verification rule to add references.';
-  }
-
-  Widget _buildReferenceSetup() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: widget.isDarkMode
-            ? _T.surface
-            : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: widget.isDarkMode
-              ? _T.border
-              : const Color(0xFFCACDD5),
-          width: 1.2,
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 12,
-      ),
-      child: LayoutBuilder(
-        builder: (
-          context,
-          constraints,
-        ) {
-          final compact =
-              constraints.maxWidth < 330;
-
-          final tileSize =
-              compact ? 52.0 : 64.0;
-
-          return Column(
-            children: [
-              if (stayInPosition)
-                _ReferenceRow(
-                  title: 'Reference Position',
-                  subtitle:
-                      'Capture the pose/position you should maintain.',
-                  trailing: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _CaptureTile(
-                      size: tileSize,
-                      captured:
-                          referencePositionCaptured,
-                      onTap:
-                          _captureReferencePosition,
-                    ),
-                  ),
-                ),
-
-              if (stayInPosition && objectInFrame)
-                const Padding(
-                  padding: EdgeInsets.symmetric(
-                    vertical: 10,
-                  ),
-                  child: Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: Color(0xFFE2E3E7),
-                  ),
-                ),
-
-              if (objectInFrame)
-                _ReferenceRow(
-                  title: 'Required Objects',
-                  subtitle:
-                      'Add up to 3 objects that must stay in frame.',
-                  trailing: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children:
-                          _buildObjectCaptureTiles(
-                        tileSize,
-                        compact,
-                      ),
-                    ),
-                  ),
-                ),
-
-              if (!stayInPosition &&
-                  !objectInFrame)
-                const SizedBox(
-                  height: 90,
-                  child: Center(
-                    child: Text(
-                      'Choose a verification rule above.',
-                      style: TextStyle(
-                        color: Color(0xFF858995),
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  List<Widget> _buildObjectCaptureTiles(
-    double tileSize,
-    bool compact,
-  ) {
-    final widgets = <Widget>[];
-
-    for (int i = 0; i < 3; i++) {
-      if (i < capturedObjects) {
-        widgets.add(
-          _CapturedObjectTile(
-            size: tileSize,
-          ),
-        );
-      } else if (i == capturedObjects &&
-          capturedObjects < 3) {
-        widgets.add(
-          _CaptureTile(
-            size: tileSize,
-            captured: false,
-            onTap: _captureObject,
-          ),
-        );
-      } else {
-        widgets.add(
-          _EmptyCaptureTile(
-            size: tileSize,
-          ),
-        );
+  Future<void> _initialize() async {
+    if (!MlKitCameraImageConverter.supported) {
+      if (!mounted) {
+        return;
       }
 
-      if (i != 2) {
-        widgets.add(
-          const SizedBox(width: 7),
-        );
-      }
-    }
+      setState(() {
+        _initializing = false;
 
-    widgets.add(
-      const SizedBox(width: 9),
-    );
+        _status = 'This feature requires Android or iPhone.';
+      });
 
-    widgets.add(
-      _CaptureCounter(
-        current: capturedObjects,
-        total: 3,
-        compact: compact,
-      ),
-    );
-
-    return widgets;
-  }
-
-  // ===========================================================
-  // ALARM
-  // ===========================================================
-
-  Widget _buildAlarmSound() {
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: _selectAlarm,
-      child: Container(
-        height: 58,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-        ),
-        decoration: BoxDecoration(
-          color: widget.isDarkMode
-              ? _T.surface
-              : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: widget.isDarkMode
-                ? _T.border
-                : const Color(0xFFCACDD5),
-            width: 1.2,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: Theme.of(context).brightness ==
-                    Brightness.dark
-                ? const Color(0xFF28171B)
-                : const Color(0xFFFFECEE),
-                borderRadius: BorderRadius.circular(
-                  11,
-                ),
-              ),
-              child: const Icon(
-                Icons.music_note_rounded,
-                color: _C.red,
-                size: 26,
-              ),
-            ),
-
-            const SizedBox(width: 13),
-
-            Expanded(
-              child: Text(
-                selectedAlarm,
-                style: TextStyle(
-                  color: widget.isDarkMode
-                      ? _T.text
-                      : Colors.black,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-
-            Icon(
-              Icons.chevron_right_rounded,
-              color: widget.isDarkMode
-                  ? _T.muted
-                  : const Color(0xFF4F5158),
-              size: 28,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _selectAlarm() {
-    final alarms = [
-      'Default Alarm',
-      'Pulse',
-      'Bell',
-      'Alert',
-    ];
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: widget.isDarkMode
-          ? _T.surface
-          : Colors.white,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(24),
-        ),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              18,
-              4,
-              18,
-              20,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Alarm Sound',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                ...alarms.map(
-                  (alarm) {
-                    final selected =
-                        selectedAlarm == alarm;
-
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        Icons.music_note_rounded,
-                        color: selected
-                            ? _C.red
-                            : _C.grey,
-                      ),
-                      title: Text(
-                        alarm,
-                        style: TextStyle(
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                        ),
-                      ),
-                      trailing: selected
-                          ? const Icon(
-                              Icons.check_rounded,
-                              color: _C.red,
-                            )
-                          : null,
-                      onTap: () {
-                        setState(() {
-                          selectedAlarm = alarm;
-                        });
-
-                        Navigator.pop(context);
-                      },
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // ===========================================================
-  // SENSITIVITY
-  // ===========================================================
-
-  Widget _buildSensitivity() {
-    return Column(
-      children: [
-        LayoutBuilder(
-          builder: (
-            context,
-            constraints,
-          ) {
-            final activeWidth =
-                constraints.maxWidth *
-                    sensitivity;
-
-            return SizedBox(
-              height: 34,
-              child: Stack(
-                alignment: Alignment.centerLeft,
-                children: [
-                  Positioned(
-                    left: 6,
-                    right: 6,
-                    child: Container(
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: const Color(
-                          0xFFDADCE1,
-                        ),
-                        borderRadius:
-                            BorderRadius.circular(
-                          999,
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  Positioned(
-                    left: 6,
-                    width: activeWidth > 12
-                        ? activeWidth - 6
-                        : 6,
-                    child: Container(
-                      height: 6,
-                      decoration: BoxDecoration(
-                        borderRadius:
-                            BorderRadius.circular(
-                          999,
-                        ),
-                        gradient:
-                            const LinearGradient(
-                          colors: [
-                            Color(0xFFFF101C),
-                            Color(0xFFFF7A00),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  SliderTheme(
-                    data: SliderTheme.of(context)
-                        .copyWith(
-                      activeTrackColor:
-                          Colors.transparent,
-                      inactiveTrackColor:
-                          Colors.transparent,
-                      trackHeight: 0,
-                      overlayColor:
-                          Colors.transparent,
-                      thumbColor: Colors.white,
-                      thumbShape:
-                          const RoundSliderThumbShape(
-                        enabledThumbRadius: 11,
-                        elevation: 3,
-                        pressedElevation: 5,
-                      ),
-                    ),
-                    child: Slider(
-                      value: sensitivity,
-                      min: 0,
-                      max: 1,
-                      onChanged: (value) {
-                        setState(() {
-                          sensitivity = value;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-
-        const Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: 3,
-          ),
-          child: Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Low',
-                style: TextStyle(
-                  color: Color(0xFF555861),
-                  fontSize: 12,
-                ),
-              ),
-              Text(
-                'Medium',
-                style: TextStyle(
-                  color: Color(0xFF25262B),
-                  fontSize: 12,
-                ),
-              ),
-              Text(
-                'High',
-                style: TextStyle(
-                  color: Color(0xFF555861),
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ===========================================================
-  // CAPTURE PLACEHOLDERS
-  // ===========================================================
-
-  void _captureReferencePosition() {
-    setState(() {
-      referencePositionCaptured = true;
-    });
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Reference position capture placeholder',
-          ),
-        ),
-      );
-  }
-
-  void _captureObject() {
-    if (capturedObjects >= 3) {
       return;
     }
 
-    setState(() {
-      capturedObjects++;
-    });
+    _poseDetector = PoseDetector(
+      options: PoseDetectorOptions(
+        model: PoseDetectionModel.base,
+        mode: PoseDetectionMode.stream,
+      ),
+    );
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            '$capturedObjects/3 objects captured',
-          ),
-        ),
-      );
+    _faceDetector = FaceDetector(
+      options: FaceDetectorOptions(
+        performanceMode: FaceDetectorMode.fast,
+        enableTracking: true,
+      ),
+    );
+
+    await _initializeCamera();
   }
 
   // ===========================================================
-  // PRO
+  // CAMERA
   // ===========================================================
 
-  void _showUpgradeDialog({
-    required String attemptedMethod,
-  }) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 24,
-          ),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(
-              20,
-              20,
-              20,
-              16,
-            ),
-            decoration: BoxDecoration(
-              color: widget.isDarkMode
-                  ? _T.surface
-                  : Colors.white,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: const Color(0xFFFFD8DC),
-              ),
-            ),
+  Future<void> _initializeCamera() async {
+    if (_startingCamera ||
+        _controller != null ||
+        _disposed ||
+        !_lifecycleActive) {
+      return;
+    }
+
+    _startingCamera = true;
+    CameraController? pendingController;
+
+    try {
+      final disposal = _cameraDisposal;
+      if (disposal != null) {
+        await disposal;
+      }
+
+      if (_disposed || !_lifecycleActive || _controller != null) {
+        return;
+      }
+
+      final cameras = await availableCameras();
+
+      if (cameras.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _initializing = false;
+
+            _status = 'No camera was found.';
+          });
+        }
+
+        return;
+      }
+
+      final camera = cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: MlKitCameraImageConverter.cameraFormat,
+      );
+      pendingController = controller;
+
+      await controller.initialize();
+
+      try {
+        await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
+      } catch (_) {}
+
+      if (!mounted || _disposed || !_lifecycleActive) {
+        return;
+      }
+
+      _camera = camera;
+      _controller = controller;
+      _cameraPreview = RepaintBoundary(child: CameraPreview(controller));
+      _acceptFrames = true;
+      pendingController = null;
+
+      await controller.startImageStream(_handleFrame);
+
+      if (!mounted || _disposed || !_lifecycleActive) {
+        await _disposeCamera();
+        return;
+      }
+
+      setState(() {
+        _initializing = false;
+
+        _status = 'Sit or stand in the position you want TaskProof to enforce.';
+      });
+    } on CameraException catch (error) {
+      await _disposeCamera();
+
+      if (!mounted || _disposed) {
+        return;
+      }
+
+      setState(() {
+        _initializing = false;
+
+        _status = 'Camera error: ${error.description ?? error.code}';
+      });
+    } finally {
+      final abandonedController = pendingController;
+      if (abandonedController != null) {
+        try {
+          await abandonedController.dispose();
+        } catch (_) {}
+      }
+
+      _startingCamera = false;
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    final existing = _cameraDisposal;
+    if (existing != null) {
+      return existing;
+    }
+
+    final disposal = _performCameraDisposal();
+    _cameraDisposal = disposal;
+
+    try {
+      await disposal;
+    } finally {
+      if (identical(_cameraDisposal, disposal)) {
+        _cameraDisposal = null;
+      }
+    }
+  }
+
+  Future<void> _performCameraDisposal() async {
+    _acceptFrames = false;
+
+    final controller = _controller;
+
+    _controller = null;
+    _camera = null;
+    _cameraPreview = null;
+
+    if (controller != null) {
+      try {
+        if (controller.value.isStreamingImages) {
+          await controller.stopImageStream();
+        }
+      } catch (_) {}
+    }
+
+    final analysis = _activeAnalysis;
+    if (analysis != null) {
+      try {
+        await analysis;
+      } catch (_) {}
+    }
+
+    if (controller != null) {
+      try {
+        await controller.dispose();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _shutdown() {
+    return _shutdownTask ??= _performShutdown();
+  }
+
+  Future<void> _performShutdown() async {
+    await _disposeCamera();
+
+    final poseDetector = _poseDetector;
+    final faceDetector = _faceDetector;
+    _poseDetector = null;
+    _faceDetector = null;
+
+    await Future.wait<void>([
+      if (poseDetector != null) poseDetector.close(),
+      if (faceDetector != null) faceDetector.close(),
+    ]);
+  }
+
+  // ===========================================================
+  // ML FRAME PROCESSING
+  // ===========================================================
+
+  void _handleFrame(CameraImage image) {
+    if (_processing || !_acceptFrames || _disposed) {
+      return;
+    }
+
+    final analysis = _processFrame(image);
+    _activeAnalysis = analysis;
+
+    unawaited(
+      analysis
+          .catchError((Object error, StackTrace stackTrace) {
+            debugPrint('Reference pose processing error: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          })
+          .whenComplete(() {
+            if (identical(_activeAnalysis, analysis)) {
+              _activeAnalysis = null;
+            }
+          }),
+    );
+  }
+
+  Future<void> _processFrame(CameraImage image) async {
+    if (_processing ||
+        !_acceptFrames ||
+        _disposed ||
+        _controller == null ||
+        _camera == null ||
+        _poseDetector == null ||
+        _faceDetector == null) {
+      return;
+    }
+
+    final now = DateTime.now();
+
+    // Four pose updates per second are responsive for alignment while leaving
+    // enough time for the camera texture and controls to render smoothly.
+    if (now.difference(_lastProcessed) < const Duration(milliseconds: 250)) {
+      return;
+    }
+
+    _lastProcessed = now;
+
+    final frame = MlKitCameraImageConverter.convert(
+      image: image,
+      camera: _camera!,
+      deviceOrientation: _controller!.value.deviceOrientation,
+    );
+
+    if (frame == null) {
+      return;
+    }
+
+    _processing = true;
+
+    try {
+      final poses = await _poseDetector!.processImage(frame.inputImage);
+
+      var faces = _cachedFaces;
+      if (poses.isEmpty) {
+        faces = const [];
+        _cachedFaces = const [];
+        _lastFaceProcessed = DateTime.fromMillisecondsSinceEpoch(0);
+      } else if (now.difference(_lastFaceProcessed) >=
+          const Duration(milliseconds: 500)) {
+        faces = await _faceDetector!.processImage(frame.inputImage);
+        _cachedFaces = faces;
+        _lastFaceProcessed = now;
+      }
+
+      final snapshot = TaskPoseAnalyzer.createSnapshot(
+        poses: poses,
+        faces: faces,
+        imageSize: frame.imageSize,
+      );
+
+      if (!mounted || _disposed || !_acceptFrames) {
+        return;
+      }
+
+      _setCurrentPose(snapshot);
+    } catch (error) {
+      debugPrint('Reference pose processing error: $error');
+    } finally {
+      _processing = false;
+    }
+  }
+
+  void _setCurrentPose(PoseReference? snapshot) {
+    _currentPose = snapshot;
+    _status = snapshot == null
+        ? 'Make sure enough of your body is visible to detect your position.'
+        : 'Position detected. Hold your normal position and capture.';
+
+    final detected = snapshot != null;
+    if (_positionDetected.value != detected) {
+      _positionDetected.value = detected;
+    }
+  }
+
+  // ===========================================================
+  // BUILD
+  // ===========================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _positionDetected,
+      builder: (context, positionDetected, child) {
+        return Scaffold(
+          backgroundColor: const Color(0xFF07090D),
+          body: SafeArea(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                const _DualVerificationHeroIcon(),
+                // =================================================
+                // HEADER
+                // =================================================
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                        },
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                        ),
+                      ),
 
-                const SizedBox(height: 16),
-
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Unlock Dual Verification',
-                        textAlign: TextAlign.center,
+                      const Text(
+                        'Capture Position',
                         style: TextStyle(
-                          color: widget.isDarkMode
-                              ? _T.text
-                              : Colors.black,
+                          color: Colors.white,
                           fontSize: 21,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
+                    ],
+                  ),
+                ),
+
+                // =================================================
+                // CAMERA
+                // =================================================
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          _cameraView(),
+
+                          IgnorePointer(
+                            child: CustomPaint(
+                              painter: _ReferenceCameraPainter(
+                                detected: positionDetected,
+                              ),
+                            ),
+                          ),
+
+                          Positioned(
+                            top: 16,
+                            left: 16,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 9,
+                              ),
+                              decoration: BoxDecoration(
+                                color: widget.isDarkMode
+                                    ? const Color(0xFF0E1116)
+                                    : const Color(0xFFF8F9FA),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(
+                                  color: widget.isDarkMode
+                                      ? const Color(0xFF2A2F37)
+                                      : const Color(0xFFE0E3E8),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: BoxDecoration(
+                                      color: positionDetected
+                                          ? const Color(0xFF22C55E)
+                                          : _C.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 9),
+                                  Text(
+                                    positionDetected
+                                        ? 'Position Detected'
+                                        : 'Finding Position...',
+                                    style: TextStyle(
+                                      color: positionDetected
+                                          ? const Color(0xFF22C55E)
+                                          : _C.red,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
+                ),
 
-                    const SizedBox(width: 7),
-
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _C.red,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'PRO',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 7, 20, 23),
+                  child: Column(
+                    children: [
+                      Text(
+                        _status,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFD6D9DE),
+                          fontSize: 14,
+                          height: 1.3,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 10),
-
-                Text(
-                  'Free tasks can use one verification method at a time. '
-                  'To use $attemptedMethod together with your current method, '
-                  'upgrade to TaskProof Pro.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: widget.isDarkMode
-                        ? _T.muted
-                        : const Color(0xFF555861),
-                    fontSize: 14,
-                    height: 1.4,
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-
-                Text(
-                  'Dual Verification checks both your position and required '
-                  'object during the same session.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: widget.isDarkMode
-                        ? _T.muted
-                        : const Color(0xFF777A84),
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-
-                const SizedBox(height: 18),
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _C.red,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(13),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child: ElevatedButton(
+                          onPressed: !positionDetected
+                              ? null
+                              : () {
+                                  final pose = _currentPose;
+                                  if (pose != null) {
+                                    Navigator.pop(context, pose);
+                                  }
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _C.red,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: const Color(0xFF444850),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Capture Reference',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                    onPressed: () {
-                      // TODO: Replace this with your real Pro purchase screen.
-                      Navigator.pop(context);
-                    },
-                    child: const Text(
-                      'Upgrade to TaskProof Pro',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                  },
-                  child: Text(
-                    'Not now',
-                    style: TextStyle(
-                      color: widget.isDarkMode
-                          ? _T.muted
-                          : const Color(0xFF555861),
-                      fontWeight: FontWeight.w600,
-                    ),
+                    ],
                   ),
                 ),
               ],
@@ -2541,1607 +3647,76 @@ class _NewTaskPageState extends State<NewTaskPage> {
     );
   }
 
-  // ===========================================================
-  // SAVE
-  // ===========================================================
-
-  void _saveTask() {
-    final taskName =
-        taskNameController.text.trim();
-
-    if (taskName.isEmpty) {
-      _showMessage(
-        'Enter a task name first.',
+  Widget _cameraView() {
+    if (_initializing) {
+      return const ColoredBox(
+        color: Colors.black,
+        child: Center(child: CircularProgressIndicator(color: _C.red)),
       );
-      return;
     }
 
-    if (hours == 0 &&
-        minutes == 0 &&
-        seconds == 0) {
-      _showMessage(
-        'Task duration must be longer than 0 seconds.',
-      );
-      return;
-    }
+    final controller = _controller;
 
-    if (!stayInPosition &&
-        !objectInFrame) {
-      _showMessage(
-        'Choose at least one verification rule.',
-      );
-      return;
-    }
-
-    DateTime? scheduledFor;
-
-    if (scheduleEnabled) {
-      scheduledFor =
-          _selectedScheduledDateTime;
-
-      if (scheduledFor == null) {
-        _showMessage(
-          'Choose a date and time for this task.',
-        );
-        return;
-      }
-
-      if (!scheduledFor.isAfter(
-        DateTime.now(),
-      )) {
-        _showMessage(
-          'Choose a scheduled time in the future.',
-        );
-        return;
-      }
-    }
-
-    final task = TaskData(
-      id: DateTime.now()
-          .microsecondsSinceEpoch
-          .toString(),
-      name: taskName,
-      icon: selectedTaskIcon,
-      hours: hours,
-      minutes: minutes,
-      seconds: seconds,
-      stayInPosition: stayInPosition,
-      objectInFrame: objectInFrame,
-      alarm: selectedAlarm,
-      sensitivity: sensitivity,
-      status: scheduleEnabled
-          ? TaskStatus.scheduled
-          : TaskStatus.ready,
-      scheduledFor: scheduledFor,
-    );
-
-    Navigator.pop(
-      context,
-      task,
-    );
-  }
-
-  void _showMessage(
-    String text,
-  ) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(text),
-        ),
-      );
-  }
-}
-
-// =============================================================
-// SCHEDULE PICKER ROW
-// =============================================================
-
-class _SchedulePickerRow
-    extends StatelessWidget {
-  const _SchedulePickerRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String value;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 13,
-            vertical: 10,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).brightness ==
-                Brightness.dark
-            ? const Color(0xFF28171B)
-            : const Color(0xFFFFECEE),
-                  borderRadius: BorderRadius.circular(
-                    10,
-                  ),
-                ),
-                child: Icon(
-                  icon,
-                  color: _C.red,
-                  size: 22,
-                ),
-              ),
-
-              const SizedBox(width: 12),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: Theme.of(context).brightness ==
-                                Brightness.dark
-                            ? _T.text
-                            : Colors.black,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-
-                    const SizedBox(height: 2),
-
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Theme.of(context).brightness ==
-                                Brightness.dark
-                            ? _T.muted
-                            : const Color(0xFF777A84),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              Flexible(
-                child: Text(
-                  value,
-                  textAlign: TextAlign.right,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Theme.of(context).brightness ==
-                            Brightness.dark
-                        ? _T.text
-                        : Colors.black,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-
-              const SizedBox(width: 5),
-
-              Icon(
-                Icons.chevron_right_rounded,
-                color: Theme.of(context).brightness ==
-                        Brightness.dark
-                    ? _T.muted
-                    : const Color(0xFF34363D),
-                size: 26,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================
-// TASK ICON TILE
-// =============================================================
-
-class _TaskIconTile
-    extends StatelessWidget {
-  const _TaskIconTile({
-    required this.type,
-    this.size = 50,
-  });
-
-  final TaskIconType type;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    if (type == TaskIconType.generic) {
-      return CustomPaint(
-        foregroundPainter:
-            const _ScanCornersPainter(
-          color: _C.red,
-          inset: 7,
-          length: 7,
-          strokeWidth: 1.7,
-        ),
-        child: Container(
-          width: size,
-          height: size,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFECEE),
-            borderRadius: BorderRadius.circular(
-              11,
-            ),
-          ),
-          child: CustomPaint(
-            size: const Size(27, 27),
-            painter: _GenericTaskPainter(
-              color: Theme.of(context).brightness ==
-                      Brightness.dark
-                  ? _T.text
-                  : const Color(0xFF24262D),
+    if (controller == null || !controller.value.isInitialized) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(25),
+            child: Text(
+              _status,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white),
             ),
           ),
         ),
       );
     }
 
-    return Container(
-      width: size,
-      height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFECEE),
-        borderRadius: BorderRadius.circular(11),
-      ),
-      child: Icon(
-        _taskIconData(type),
-        color: Theme.of(context).brightness ==
-                Brightness.dark
-            ? _T.text
-            : const Color(0xFF202229),
-        size: size * .52,
-      ),
-    );
+    return _cameraPreview ?? RepaintBoundary(child: CameraPreview(controller));
   }
 }
 
-class _GenericTaskPainter
-    extends CustomPainter {
-  const _GenericTaskPainter({
-    required this.color,
-  });
+// =============================================================
+// REFERENCE CAMERA PAINTER
+// =============================================================
 
-  final Color color;
+class _ReferenceCameraPainter extends CustomPainter {
+  const _ReferenceCameraPainter({required this.detected});
+
+  final bool detected;
 
   @override
-  void paint(
-    Canvas canvas,
-    Size size,
-  ) {
+  void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = color
-      ..strokeWidth = 2.7
+      ..color = detected ? const Color(0xFF22C55E) : _C.red
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    final left = size.width * .22;
-    final right = size.width * .78;
+    const inset = 24.0;
 
-    for (final y in [
-      .28,
-      .50,
-      .72,
-    ]) {
-      canvas.drawLine(
-        Offset(
-          left,
-          size.height * y,
-        ),
-        Offset(
-          right,
-          size.height * y,
-        ),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(
-    covariant CustomPainter oldDelegate,
-  ) {
-    return oldDelegate is! _GenericTaskPainter ||
-        oldDelegate.color != color;
-  }
-}
-
-// =============================================================
-// ICON PICKER ITEM
-// =============================================================
-
-class _TaskIconPickerItem
-    extends StatelessWidget {
-  const _TaskIconPickerItem({
-    required this.type,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final TaskIconType type;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(7),
-        decoration: BoxDecoration(
-          color: Theme.of(context).brightness ==
-                  Brightness.dark
-              ? (selected
-                  ? const Color(0xFF271418)
-                  : _T.selected)
-              : (selected
-                  ? const Color(0xFFFFF1F2)
-                  : const Color(0xFFF9F9FA)),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected
-                ? _C.red
-                : (Theme.of(context).brightness ==
-                        Brightness.dark
-                    ? _T.border
-                    : const Color(0xFFE6E7EB)),
-            width: selected ? 1.5 : 1,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _TaskIconTile(
-              type: type,
-              size: 45,
-            ),
-
-            const SizedBox(height: 6),
-
-            Text(
-              _taskIconLabel(type),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: selected
-                    ? _C.red
-                    : (Theme.of(context).brightness ==
-                            Brightness.dark
-                        ? _T.text
-                        : const Color(0xFF33353B)),
-                fontSize: 10,
-                fontWeight: selected
-                    ? FontWeight.w700
-                    : FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================
-// TASK ICON HELPERS
-// =============================================================
-
-IconData _taskIconData(
-  TaskIconType type,
-) {
-  switch (type) {
-    case TaskIconType.generic:
-      return Icons.list_rounded;
-    case TaskIconType.study:
-      return Icons.menu_book_rounded;
-    case TaskIconType.cleaning:
-      return Icons.cleaning_services_rounded;
-    case TaskIconType.workout:
-      return Icons.fitness_center_rounded;
-    case TaskIconType.running:
-      return Icons.directions_run_rounded;
-    case TaskIconType.computer:
-      return Icons.laptop_mac_rounded;
-    case TaskIconType.cooking:
-      return Icons.restaurant_rounded;
-    case TaskIconType.laundry:
-      return Icons.local_laundry_service_rounded;
-    case TaskIconType.meditation:
-      return Icons.self_improvement_rounded;
-    case TaskIconType.garden:
-      return Icons.local_florist_rounded;
-    case TaskIconType.sleep:
-      return Icons.bed_rounded;
-    case TaskIconType.shopping:
-      return Icons.shopping_cart_rounded;
-    case TaskIconType.hydration:
-      return Icons.water_drop_rounded;
-    case TaskIconType.health:
-      return Icons.medication_rounded;
-    case TaskIconType.music:
-      return Icons.music_note_rounded;
-    case TaskIconType.phone:
-      return Icons.phone_rounded;
-    case TaskIconType.pet:
-      return Icons.pets_rounded;
-    case TaskIconType.selfCare:
-      return Icons.spa_rounded;
-  }
-}
-
-String _taskIconLabel(
-  TaskIconType type,
-) {
-  switch (type) {
-    case TaskIconType.generic:
-      return 'Task';
-    case TaskIconType.study:
-      return 'Study';
-    case TaskIconType.cleaning:
-      return 'Clean';
-    case TaskIconType.workout:
-      return 'Workout';
-    case TaskIconType.running:
-      return 'Run';
-    case TaskIconType.computer:
-      return 'Work';
-    case TaskIconType.cooking:
-      return 'Cook';
-    case TaskIconType.laundry:
-      return 'Laundry';
-    case TaskIconType.meditation:
-      return 'Mindful';
-    case TaskIconType.garden:
-      return 'Garden';
-    case TaskIconType.sleep:
-      return 'Sleep';
-    case TaskIconType.shopping:
-      return 'Shopping';
-    case TaskIconType.hydration:
-      return 'Water';
-    case TaskIconType.health:
-      return 'Health';
-    case TaskIconType.music:
-      return 'Music';
-    case TaskIconType.phone:
-      return 'Call';
-    case TaskIconType.pet:
-      return 'Pet';
-    case TaskIconType.selfCare:
-      return 'Self Care';
-  }
-}
-
-// =============================================================
-// DURATION WHEEL
-// =============================================================
-
-class _DurationWheel
-    extends StatelessWidget {
-  const _DurationWheel({
-    required this.controller,
-    required this.selectedValue,
-    required this.itemCount,
-    required this.label,
-    required this.onChanged,
-  });
-
-  final FixedExtentScrollController controller;
-  final int selectedValue;
-  final int itemCount;
-  final String label;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 48,
-      child: Column(
-        children: [
-          SizedBox(
-            height: 112,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                ListWheelScrollView.useDelegate(
-                  controller: controller,
-                  itemExtent: 36,
-                  diameterRatio: 100,
-                  perspective: .0001,
-                  physics:
-                      const FixedExtentScrollPhysics(),
-                  onSelectedItemChanged: onChanged,
-                  childDelegate:
-                      ListWheelChildBuilderDelegate(
-                    childCount: itemCount,
-                    builder: (
-                      context,
-                      index,
-                    ) {
-                      final selected =
-                          index == selectedValue;
-
-                      return Center(
-                        child: Text(
-                          index
-                              .toString()
-                              .padLeft(2, '0'),
-                          style: TextStyle(
-                            color: selected
-                                ? (Theme.of(context).brightness ==
-                                        Brightness.dark
-                                    ? _T.text
-                                    : Colors.black)
-                                : (Theme.of(context).brightness ==
-                                        Brightness.dark
-                                    ? _T.muted
-                                    : const Color(
-                                        0xFF90939C,
-                                      )),
-                            fontSize:
-                                selected ? 28 : 15,
-                            fontWeight: selected
-                                ? FontWeight.w800
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                Positioned(
-                  top: 37,
-                  left: 4,
-                  right: 4,
-                  child: IgnorePointer(
-                    child: Container(
-                      height: 1.3,
-                      color: Theme.of(context).brightness ==
-                              Brightness.dark
-                          ? _T.border
-                          : Colors.black,
-                    ),
-                  ),
-                ),
-
-                Positioned(
-                  bottom: 37,
-                  left: 4,
-                  right: 4,
-                  child: IgnorePointer(
-                    child: Container(
-                      height: 1.3,
-                      color: Theme.of(context).brightness ==
-                              Brightness.dark
-                          ? _T.border
-                          : Colors.black,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 3),
-
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF555861),
-              fontSize: 9,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DurationColon
-    extends StatelessWidget {
-  const _DurationColon();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 13,
-      child: Column(
-        children: [
-          SizedBox(
-            height: 112,
-            child: Center(
-              child: Text(
-                ':',
-                style: TextStyle(
-                  color: Theme.of(context).brightness ==
-                          Brightness.dark
-                      ? _T.text
-                      : Colors.black,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================
-// VERIFICATION WIDGETS
-// =============================================================
-
-enum _VerificationIconType {
-  person,
-  object,
-  dual,
-}
-
-class _VerificationRow
-    extends StatelessWidget {
-  const _VerificationRow({
-    required this.iconType,
-    required this.title,
-    required this.subtitle,
-    required this.checked,
-    required this.onTap,
-  }) : showPro = false, locked = false;
-
-  final _VerificationIconType iconType;
-  final String title;
-  final String subtitle;
-  final bool checked;
-  final bool locked;
-  final bool showPro;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            12,
-            10,
-            12,
-            10,
-          ),
-          child: Row(
-            children: [
-              _ScanIconTile(
-                type: iconType,
-              ),
-
-              const SizedBox(width: 12),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 7,
-                      crossAxisAlignment:
-                          WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          title,
-                          style: TextStyle(
-                            color: Theme.of(context).brightness ==
-                                    Brightness.dark
-                                ? _T.text
-                                : Colors.black,
-                            fontSize: 16,
-                            fontWeight:
-                                FontWeight.w800,
-                          ),
-                        ),
-
-                        if (showPro)
-                          Container(
-                            padding:
-                                const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _C.red,
-                              borderRadius:
-                                  BorderRadius.circular(
-                                5,
-                              ),
-                            ),
-                            child: const Text(
-                              'Pro',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight:
-                                    FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Theme.of(context).brightness ==
-                                Brightness.dark
-                            ? _T.muted
-                            : const Color(0xFF555861),
-                        fontSize: 13,
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              if (locked)
-                const Icon(
-                  Icons.lock_outline_rounded,
-                  color: Color(0xFF686B74),
-                  size: 26,
-                )
-              else
-                _CheckBox(
-                  checked: checked,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ScanIconTile
-    extends StatelessWidget {
-  const _ScanIconTile({
-    required this.type,
-  });
-
-  final _VerificationIconType type;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget icon;
-
-    switch (type) {
-      case _VerificationIconType.person:
-        icon = const Icon(
-          Icons.person_outline_rounded,
-          color: _C.red,
-          size: 26,
-        );
-        break;
-
-      case _VerificationIconType.object:
-        icon = const Icon(
-          Icons.inventory_2_outlined,
-          color: _C.red,
-          size: 24,
-        );
-        break;
-
-      case _VerificationIconType.dual:
-        icon = const SizedBox(
-          width: 32,
-          height: 30,
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                bottom: 2,
-                child: Icon(
-                  Icons.person_outline_rounded,
-                  color: _C.red,
-                  size: 25,
-                ),
-              ),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Icon(
-                  Icons.inventory_2_outlined,
-                  color: _C.red,
-                  size: 14,
-                ),
-              ),
-            ],
-          ),
-        );
-        break;
-    }
-
-    return CustomPaint(
-      foregroundPainter:
-          const _ScanCornersPainter(
-        color: _C.red,
-        inset: 7,
-        length: 8,
-        strokeWidth: 1.8,
-      ),
-      child: Container(
-        width: 54,
-        height: 54,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: Theme.of(context).brightness ==
-                  Brightness.dark
-              ? const Color(0xFF28171B)
-              : const Color(0xFFFFEBED),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: icon,
-      ),
-    );
-  }
-}
-
-
-class _DualVerificationFooter extends StatelessWidget {
-  const _DualVerificationFooter({
-    required this.active,
-    required this.isPro,
-  });
-
-  final bool active;
-  final bool isPro;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = active && isPro;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        12,
-        9,
-        12,
-        9,
-      ),
-      decoration: BoxDecoration(
-        color: Theme.of(context).brightness ==
-                Brightness.dark
-            ? (enabled
-                ? const Color(0xFF271418)
-                : _T.selected)
-            : (enabled
-                ? const Color(0xFFFFF0F2)
-                : const Color(0xFFF7F7F9)),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Theme.of(context).brightness ==
-                  Brightness.dark
-              ? _T.border
-              : (enabled
-                  ? const Color(0xFFFFC8CE)
-                  : const Color(0xFFE2E3E7)),
-        ),
-      ),
-      child: Row(
-        children: [
-          _MiniDualVerificationIcon(
-            active: enabled,
-          ),
-
-          const SizedBox(width: 10),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      'Dual Verification',
-                      style: TextStyle(
-                        color: enabled
-                            ? _C.red
-                            : const Color(0xFF666A73),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: enabled
-                            ? _C.red
-                            : const Color(0xFF8B8E96),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: const Text(
-                        'PRO',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  enabled
-                      ? 'Both verification methods are active.'
-                      : 'Select both methods to unlock combined verification.',
-                  style: TextStyle(
-                    color: enabled
-                        ? const Color(0xFF555861)
-                        : const Color(0xFF8A8D95),
-                    fontSize: 11,
-                    height: 1.25,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(width: 8),
-
-          Icon(
-            enabled
-                ? Icons.check_circle_rounded
-                : Icons.lock_outline_rounded,
-            color: enabled
-                ? _C.red
-                : const Color(0xFF7A7D86),
-            size: 20,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MiniDualVerificationIcon extends StatelessWidget {
-  const _MiniDualVerificationIcon({
-    required this.active,
-  });
-
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = active
-        ? _C.red
-        : const Color(0xFF7A7D86);
-
-    return SizedBox(
-      width: 36,
-      height: 30,
-      child: Stack(
-        children: [
-          Positioned(
-            left: 0,
-            bottom: 2,
-            child: Icon(
-              Icons.person_outline_rounded,
-              color: color,
-              size: 24,
-            ),
-          ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Icon(
-              Icons.inventory_2_outlined,
-              color: color,
-              size: 15,
-            ),
-          ),
-          Positioned(
-            left: 17,
-            top: 5,
-            child: Container(
-              width: 8,
-              height: 1.5,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DualVerificationHeroIcon extends StatelessWidget {
-  const _DualVerificationHeroIcon();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 86,
-      height: 64,
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFECEE),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: const Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned(
-            left: 16,
-            child: Icon(
-              Icons.person_outline_rounded,
-              color: _C.red,
-              size: 37,
-            ),
-          ),
-          Positioned(
-            right: 15,
-            child: Icon(
-              Icons.inventory_2_outlined,
-              color: _C.red,
-              size: 31,
-            ),
-          ),
-          Positioned(
-            bottom: 7,
-            child: Icon(
-              Icons.lock_rounded,
-              color: Color(0xFF666A73),
-              size: 19,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CheckBox
-    extends StatelessWidget {
-  const _CheckBox({
-    required this.checked,
-  });
-
-  final bool checked;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(
-        milliseconds: 150,
-      ),
-      width: 27,
-      height: 27,
-      decoration: BoxDecoration(
-        color: checked
-            ? _C.red
-            : (Theme.of(context).brightness ==
-                    Brightness.dark
-                ? _T.selected
-                : const Color(0xFFF0F1F3)),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: checked
-          ? const Icon(
-              Icons.check_rounded,
-              color: Colors.white,
-              size: 20,
-            )
-          : null,
-    );
-  }
-}
-
-// =============================================================
-// REFERENCE WIDGETS
-// =============================================================
-
-class _ReferenceRow
-    extends StatelessWidget {
-  const _ReferenceRow({
-    required this.title,
-    required this.subtitle,
-    required this.trailing,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (
-        context,
-        constraints,
-      ) {
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: constraints.maxWidth * .36,
-              child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: Theme.of(context).brightness ==
-                              Brightness.dark
-                          ? _T.text
-                          : Colors.black,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-
-                  const SizedBox(height: 4),
-
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: Theme.of(context).brightness ==
-                              Brightness.dark
-                          ? _T.muted
-                          : const Color(0xFF555861),
-                      fontSize: 12,
-                      height: 1.25,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(width: 10),
-
-            Expanded(
-              child: trailing,
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _CaptureTile
-    extends StatelessWidget {
-  const _CaptureTile({
-    required this.size,
-    required this.captured,
-    required this.onTap,
-  });
-
-  final double size;
-  final bool captured;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: CustomPaint(
-        painter: const _DashedBorderPainter(
-          color: Color(0xFFB7BAC3),
-        ),
-        foregroundPainter:
-            const _ScanCornersPainter(
-          color: _C.red,
-          inset: 4,
-          length: 8,
-          strokeWidth: 1.8,
-        ),
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: Center(
-            child: captured
-                ? const Icon(
-                    Icons.check_circle_rounded,
-                    color: _C.red,
-                    size: 27,
-                  )
-                : const Icon(
-                    Icons.add_a_photo_outlined,
-                    color: Color(0xFF9C9FA6),
-                    size: 27,
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CapturedObjectTile
-    extends StatelessWidget {
-  const _CapturedObjectTile({
-    required this.size,
-  });
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: const _DashedBorderPainter(
-        color: Color(0xFFB7BAC3),
-      ),
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: const Center(
-          child: Icon(
-            Icons.check_circle_rounded,
-            color: _C.red,
-            size: 26,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyCaptureTile
-    extends StatelessWidget {
-  const _EmptyCaptureTile({
-    required this.size,
-  });
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: const _DashedBorderPainter(
-        color: Color(0xFFC4C6CD),
-      ),
-      child: SizedBox(
-        width: size,
-        height: size,
-      ),
-    );
-  }
-}
-
-class _CaptureCounter
-    extends StatelessWidget {
-  const _CaptureCounter({
-    required this.current,
-    required this.total,
-    required this.compact,
-  });
-
-  final int current;
-  final int total;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: compact ? 50 : 58,
-      height: compact ? 52 : 62,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Theme.of(context).brightness ==
-                Brightness.dark
-            ? _T.selected
-            : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: Theme.of(context).brightness ==
-                  Brightness.dark
-              ? _T.border
-              : const Color(0xFFCDD0D7),
-        ),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '$current/$total',
-            style: TextStyle(
-              color: Theme.of(context).brightness ==
-                      Brightness.dark
-                  ? _T.text
-                  : Colors.black,
-              fontSize: compact ? 16 : 19,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            'Captured',
-            style: TextStyle(
-              color: const Color(0xFF555861),
-              fontSize: compact ? 8 : 10,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================
-// SECTION HELPERS
-// =============================================================
-
-class _SectionTitle
-    extends StatelessWidget {
-  const _SectionTitle(
-    this.text,
-  );
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark =
-        Theme.of(context).brightness ==
-            Brightness.dark;
-
-    return Text(
-      text,
-      style: TextStyle(
-        color: dark ? _T.text : Colors.black,
-        fontSize: 18,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -.2,
-      ),
-    );
-  }
-}
-
-class _SectionDivider
-    extends StatelessWidget {
-  const _SectionDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        vertical: 18,
-      ),
-      child: Divider(
-        height: 2,
-        thickness: 2,
-        color: Theme.of(context).brightness ==
-                Brightness.dark
-            ? _T.border
-            : const Color(0xFFCACDD5),
-      ),
-    );
-  }
-}
-
-class _InnerDivider
-    extends StatelessWidget {
-  const _InnerDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-      ),
-      child: Divider(
-        height: 1,
-        thickness: 1,
-        color: Theme.of(context).brightness ==
-                Brightness.dark
-            ? _T.border
-            : const Color(0xFFE1E2E6),
-      ),
-    );
-  }
-}
-
-// =============================================================
-// PAINTERS
-// =============================================================
-
-class _DashedBorderPainter
-    extends CustomPainter {
-  const _DashedBorderPainter({
-    required this.color,
-  });
-
-  final Color color;
-
-  @override
-  void paint(
-    Canvas canvas,
-    Size size,
-  ) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-
-    const dash = 5.0;
-    const gap = 4.0;
-
-    void drawDashed(
-      Offset start,
-      Offset end,
-    ) {
-      final distance = (end - start).distance;
-
-      if (distance == 0) {
-        return;
-      }
-
-      final direction =
-          (end - start) / distance;
-
-      double drawn = 0;
-
-      while (drawn < distance) {
-        final startPoint =
-            start + direction * drawn;
-
-        final endDistance =
-            (drawn + dash).clamp(
-          0.0,
-          distance,
-        );
-
-        final endPoint =
-            start + direction * endDistance;
-
-        canvas.drawLine(
-          startPoint,
-          endPoint,
-          paint,
-        );
-
-        drawn += dash + gap;
-      }
-    }
-
-    final left = 1.0;
-    final top = 1.0;
-    final right = size.width - 1;
-    final bottom = size.height - 1;
-
-    drawDashed(
-      Offset(left, top),
-      Offset(right, top),
-    );
-
-    drawDashed(
-      Offset(right, top),
-      Offset(right, bottom),
-    );
-
-    drawDashed(
-      Offset(right, bottom),
-      Offset(left, bottom),
-    );
-
-    drawDashed(
-      Offset(left, bottom),
-      Offset(left, top),
-    );
-  }
-
-  @override
-  bool shouldRepaint(
-    covariant _DashedBorderPainter oldDelegate,
-  ) {
-    return oldDelegate.color != color;
-  }
-}
-
-class _ScanCornersPainter
-    extends CustomPainter {
-  const _ScanCornersPainter({
-    required this.color,
-    required this.inset,
-    required this.length,
-    required this.strokeWidth,
-  });
-
-  final Color color;
-  final double inset;
-  final double length;
-  final double strokeWidth;
-
-  @override
-  void paint(
-    Canvas canvas,
-    Size size,
-  ) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
+    const length = 37.0;
 
     final left = inset;
+
     final top = inset;
+
     final right = size.width - inset;
+
     final bottom = size.height - inset;
 
-    canvas.drawLine(
-      Offset(left, top),
-      Offset(left + length, top),
-      paint,
-    );
+    canvas.drawLine(Offset(left, top), Offset(left + length, top), paint);
 
-    canvas.drawLine(
-      Offset(left, top),
-      Offset(left, top + length),
-      paint,
-    );
+    canvas.drawLine(Offset(left, top), Offset(left, top + length), paint);
 
-    canvas.drawLine(
-      Offset(right, top),
-      Offset(right - length, top),
-      paint,
-    );
+    canvas.drawLine(Offset(right, top), Offset(right - length, top), paint);
 
-    canvas.drawLine(
-      Offset(right, top),
-      Offset(right, top + length),
-      paint,
-    );
+    canvas.drawLine(Offset(right, top), Offset(right, top + length), paint);
 
-    canvas.drawLine(
-      Offset(left, bottom),
-      Offset(left + length, bottom),
-      paint,
-    );
+    canvas.drawLine(Offset(left, bottom), Offset(left + length, bottom), paint);
 
-    canvas.drawLine(
-      Offset(left, bottom),
-      Offset(left, bottom - length),
-      paint,
-    );
+    canvas.drawLine(Offset(left, bottom), Offset(left, bottom - length), paint);
 
     canvas.drawLine(
       Offset(right, bottom),
@@ -4157,13 +3732,781 @@ class _ScanCornersPainter
   }
 
   @override
-  bool shouldRepaint(
-    covariant _ScanCornersPainter oldDelegate,
-  ) {
-    return oldDelegate.color != color ||
-        oldDelegate.inset != inset ||
-        oldDelegate.length != length ||
-        oldDelegate.strokeWidth != strokeWidth;
+  bool shouldRepaint(covariant _ReferenceCameraPainter oldDelegate) {
+    return oldDelegate.detected != detected;
+  }
+}
+
+// =============================================================
+// SMALL UI COMPONENTS
+// =============================================================
+
+class _TaskModeButton extends StatelessWidget {
+  const _TaskModeButton({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 88),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFFFFF1F2)
+              : Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? _C.red : Theme.of(context).dividerColor,
+            width: selected ? 1.4 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: selected
+                  ? _C.red
+                  : Theme.of(context).colorScheme.onSurface,
+              size: 27,
+            ),
+
+            const SizedBox(height: 5),
+
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: selected
+                    ? _C.red
+                    : Theme.of(context).colorScheme.onSurface,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+
+            const SizedBox(height: 2),
+
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              style: const TextStyle(fontSize: 10, color: Color(0xFF777A84)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkoutTypeButton extends StatelessWidget {
+  const _WorkoutTypeButton({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 78),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFFFF1F2) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? _C.red : Theme.of(context).dividerColor,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: selected
+                  ? _C.red
+                  : Theme.of(context).colorScheme.onSurface,
+              size: 24,
+            ),
+
+            const SizedBox(height: 4),
+
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: selected
+                    ? _C.red
+                    : Theme.of(context).colorScheme.onSurface,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 9, color: Color(0xFF777A84)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeSettingRow extends StatelessWidget {
+  const _ModeSettingRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        children: [
+          Icon(icon, size: 27),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+
+                const SizedBox(height: 2),
+
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF777A84),
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: 10),
+
+          trailing,
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+    );
+  }
+}
+
+class _SectionDivider extends StatelessWidget {
+  const _SectionDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 18),
+      child: Divider(height: 1),
+    );
+  }
+}
+
+class _PinkIcon extends StatelessWidget {
+  const _PinkIcon({required this.icon, required this.dark});
+
+  final IconData icon;
+
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 42,
+      height: 42,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF28171B) : const Color(0xFFFFECEE),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, color: _C.red, size: 23),
+    );
+  }
+}
+
+class _ScheduleRow extends StatelessWidget {
+  const _ScheduleRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.dark,
+    required this.onTap,
+  });
+
+  final IconData icon;
+
+  final String title;
+
+  final String subtitle;
+
+  final String value;
+
+  final bool dark;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+        child: Row(
+          children: [
+            _PinkIcon(icon: icon, dark: dark),
+
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+
+                  const SizedBox(height: 2),
+
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: dark ? _T.muted : const Color(0xFF777A84),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Flexible(
+              child: Text(
+                value,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: dark ? _T.text : Colors.black,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 3),
+
+            const Icon(Icons.chevron_right_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VerificationRow extends StatelessWidget {
+  const _VerificationRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.checked,
+    required this.dark,
+    required this.onTap,
+  });
+
+  final IconData icon;
+
+  final String title;
+
+  final String subtitle;
+
+  final bool checked;
+
+  final bool dark;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Row(
+          children: [
+            _PinkIcon(icon: icon, dark: dark),
+
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+
+                  const SizedBox(height: 3),
+
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: dark ? _T.muted : const Color(0xFF555861),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(width: 10),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 27,
+              height: 27,
+              decoration: BoxDecoration(
+                color: checked
+                    ? _C.red
+                    : dark
+                    ? _T.selected
+                    : const Color(0xFFF0F1F3),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: checked
+                  ? const Icon(
+                      Icons.check_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    )
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReferenceRow extends StatelessWidget {
+  const _ReferenceRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.complete,
+    required this.dark,
+    required this.onTap,
+  });
+
+  final IconData icon;
+
+  final String title;
+
+  final String subtitle;
+
+  final bool complete;
+
+  final bool dark;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            Container(
+              width: 58,
+              height: 58,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: dark ? _T.selected : const Color(0xFFF7F7F9),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: complete
+                      ? _C.red
+                      : dark
+                      ? _T.border
+                      : const Color(0xFFD5D7DD),
+                ),
+              ),
+              child: Icon(
+                icon,
+                color: complete
+                    ? _C.red
+                    : dark
+                    ? _T.muted
+                    : const Color(0xFF777A84),
+                size: 27,
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+
+                  const SizedBox(height: 4),
+
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: dark ? _T.muted : const Color(0xFF666A74),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const Icon(Icons.chevron_right_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProBadge extends StatelessWidget {
+  const _ProBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: _C.red,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: const Text(
+        'Pro',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================
+// DURATION COMPONENTS
+// =============================================================
+
+class _DurationWheel extends StatelessWidget {
+  const _DurationWheel({
+    required this.controller,
+    required this.selectedValue,
+    required this.itemCount,
+    required this.label,
+    required this.onChanged,
+  });
+
+  final FixedExtentScrollController controller;
+
+  final int selectedValue;
+
+  final int itemCount;
+
+  final String label;
+
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 48,
+      child: Column(
+        children: [
+          SizedBox(
+            height: 112,
+            child: ListWheelScrollView.useDelegate(
+              controller: controller,
+              itemExtent: 36,
+              physics: const FixedExtentScrollPhysics(),
+              onSelectedItemChanged: onChanged,
+              childDelegate: ListWheelChildBuilderDelegate(
+                childCount: itemCount,
+                builder: (context, index) {
+                  final selected = index == selectedValue;
+
+                  return Center(
+                    child: Text(
+                      index.toString().padLeft(2, '0'),
+                      style: TextStyle(
+                        fontSize: selected ? 28 : 15,
+                        fontWeight: selected
+                            ? FontWeight.w800
+                            : FontWeight.w500,
+                        color: selected
+                            ? Theme.of(context).colorScheme.onSurface
+                            : const Color(0xFF8D9099),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 4),
+
+          Text(
+            label,
+            style: const TextStyle(fontSize: 9, color: Color(0xFF777A84)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DurationColon extends StatelessWidget {
+  const _DurationColon();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 13,
+      height: 112,
+      child: Center(
+        child: Text(
+          ':',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================
+// ICON COMPONENT
+// =============================================================
+
+class _TaskIconTile extends StatelessWidget {
+  const _TaskIconTile({required this.type, required this.size});
+
+  final TaskIconType type;
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFECEE),
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Icon(
+        taskIconData(type),
+        color: const Color(0xFF24262D),
+        size: size * .52,
+      ),
+    );
+  }
+}
+
+// =============================================================
+// PUBLIC ICON HELPERS
+// =============================================================
+
+IconData taskIconData(TaskIconType type) {
+  switch (type) {
+    case TaskIconType.generic:
+      return Icons.list_rounded;
+
+    case TaskIconType.study:
+      return Icons.menu_book_rounded;
+
+    case TaskIconType.cleaning:
+      return Icons.cleaning_services_rounded;
+
+    case TaskIconType.workout:
+      return Icons.fitness_center_rounded;
+
+    case TaskIconType.running:
+      return Icons.directions_run_rounded;
+
+    case TaskIconType.computer:
+      return Icons.laptop_mac_rounded;
+
+    case TaskIconType.cooking:
+      return Icons.restaurant_rounded;
+
+    case TaskIconType.laundry:
+      return Icons.local_laundry_service_rounded;
+
+    case TaskIconType.meditation:
+      return Icons.self_improvement_rounded;
+
+    case TaskIconType.garden:
+      return Icons.local_florist_rounded;
+
+    case TaskIconType.sleep:
+      return Icons.bed_rounded;
+
+    case TaskIconType.shopping:
+      return Icons.shopping_cart_rounded;
+
+    case TaskIconType.hydration:
+      return Icons.water_drop_rounded;
+
+    case TaskIconType.health:
+      return Icons.medication_rounded;
+
+    case TaskIconType.music:
+      return Icons.music_note_rounded;
+
+    case TaskIconType.phone:
+      return Icons.phone_rounded;
+
+    case TaskIconType.pet:
+      return Icons.pets_rounded;
+
+    case TaskIconType.selfCare:
+      return Icons.spa_rounded;
+  }
+}
+
+String taskIconLabel(TaskIconType type) {
+  switch (type) {
+    case TaskIconType.generic:
+      return 'Task';
+
+    case TaskIconType.study:
+      return 'Study';
+
+    case TaskIconType.cleaning:
+      return 'Clean';
+
+    case TaskIconType.workout:
+      return 'Workout';
+
+    case TaskIconType.running:
+      return 'Run';
+
+    case TaskIconType.computer:
+      return 'Work';
+
+    case TaskIconType.cooking:
+      return 'Cook';
+
+    case TaskIconType.laundry:
+      return 'Laundry';
+
+    case TaskIconType.meditation:
+      return 'Meditate';
+
+    case TaskIconType.garden:
+      return 'Garden';
+
+    case TaskIconType.sleep:
+      return 'Sleep';
+
+    case TaskIconType.shopping:
+      return 'Shop';
+
+    case TaskIconType.hydration:
+      return 'Water';
+
+    case TaskIconType.health:
+      return 'Health';
+
+    case TaskIconType.music:
+      return 'Music';
+
+    case TaskIconType.phone:
+      return 'Call';
+
+    case TaskIconType.pet:
+      return 'Pet';
+
+    case TaskIconType.selfCare:
+      return 'Self Care';
   }
 }
 
@@ -4172,33 +4515,19 @@ class _ScanCornersPainter
 // =============================================================
 
 class _C {
-  static const red =
-      Color(0xFFFF101C);
-
-  static const grey =
-      Color(0xFF858995);
+  static const red = Color(0xFFFF101C);
 }
 
-// =============================================================
-// DARK MODE COLORS
-// =============================================================
-
 class _T {
-  static const background =
-      Color(0xFF0B1016);
+  static const background = Color(0xFF0B1016);
 
-  static const surface =
-      Color(0xFF10161D);
+  static const surface = Color(0xFF10161D);
 
-  static const selected =
-      Color(0xFF171E27);
+  static const selected = Color(0xFF171E27);
 
-  static const border =
-      Color(0xFF252D37);
+  static const border = Color(0xFF252D37);
 
-  static const text =
-      Color(0xFFF4F6F8);
+  static const text = Color(0xFFF4F6F8);
 
-  static const muted =
-      Color(0xFF9DA8B8);
+  static const muted = Color(0xFF9DA8B8);
 }
