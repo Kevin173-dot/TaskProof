@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element
+
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
@@ -8,6 +10,14 @@ import 'new_task_page.dart' show WorkoutExercise, WorkoutMovementType;
 enum WorkoutBodyCoverage { insufficient, good, excellent }
 
 enum JumpingJackPhase { waitingForClosed, closed, opening, open, closing }
+
+enum _PrecisionRepPhase {
+  waitingForStart,
+  start,
+  movingToTarget,
+  target,
+  returning,
+}
 
 class JumpingJackDebugData {
   const JumpingJackDebugData({
@@ -57,22 +67,51 @@ String workoutCameraGuidance(
   WorkoutPoseObservation? observation,
 ) {
   if (observation == null || !observation.personPresent) {
-    return exercise == WorkoutExercise.jumpingJacks
-        ? 'Keep your shoulders, hands, hips, and knees in frame'
-        : 'Step back so TaskProof can see you';
+    return switch (exercise) {
+      WorkoutExercise.pushUps => 'Keep your full side profile in frame',
+      WorkoutExercise.squats =>
+        'Keep your shoulders, hips, knees, and ankles in frame',
+      WorkoutExercise.sitUps => 'Keep your shoulder, hip, and knee in frame',
+      WorkoutExercise.jumpingJacks =>
+        'Keep your shoulders, hands, hips, and knees in frame',
+      WorkoutExercise.lunges => 'Keep both legs and your torso in frame',
+      _ => 'Step back so TaskProof can see you',
+    };
   }
   if (observation.tooClose && exercise != WorkoutExercise.jumpingJacks) {
     return 'Move farther from the camera';
   }
+
+  if (observation.repetitionTrackingEnabled) {
+    if (!observation.repetitionSignalsAvailable) {
+      return switch (exercise) {
+        WorkoutExercise.pushUps =>
+          'Keep one shoulder, elbow, wrist, hip, and knee in frame',
+        WorkoutExercise.squats =>
+          'Keep both hips, knees, ankles, and your torso in frame',
+        WorkoutExercise.sitUps => 'Keep one shoulder, hip, and knee in frame',
+        WorkoutExercise.lunges => 'Keep both legs and your torso in frame',
+        _ => 'Show more of your body',
+      };
+    }
+
+    if (!observation.repetitionReady) {
+      return switch (exercise) {
+        WorkoutExercise.pushUps => 'Hold the top push-up position',
+        WorkoutExercise.squats => 'Stand tall with both legs straight',
+        WorkoutExercise.sitUps => 'Lie back in the starting sit-up position',
+        WorkoutExercise.lunges => 'Stand tall before beginning the lunge',
+        _ => 'Get into the starting position',
+      };
+    }
+
+    return 'Camera position looks good';
+  }
+
   if (observation.coverage == WorkoutBodyCoverage.insufficient) {
     return switch (exercise) {
-      WorkoutExercise.pushUps => 'Keep your arms and hips in frame',
-      WorkoutExercise.squats ||
-      WorkoutExercise.lunges ||
-      WorkoutExercise.wallSit => 'Keep your hips, knees, and feet in frame',
       WorkoutExercise.jumpingJacks =>
         'Keep your shoulders, hands, hips, and knees in frame',
-      WorkoutExercise.plank => 'Keep your shoulders, hips, and legs in frame',
       _ => 'Show more of your body',
     };
   }
@@ -98,6 +137,9 @@ class WorkoutPoseObservation {
     required this.repCounted,
     required this.formFeedback,
     this.jumpingJackDebug,
+    this.repetitionTrackingEnabled = false,
+    this.repetitionSignalsAvailable = false,
+    this.repetitionReady = false,
     this.overlayLandmarks = const {},
   });
 
@@ -111,6 +153,9 @@ class WorkoutPoseObservation {
   final bool repCounted;
   final String? formFeedback;
   final JumpingJackDebugData? jumpingJackDebug;
+  final bool repetitionTrackingEnabled;
+  final bool repetitionSignalsAvailable;
+  final bool repetitionReady;
   final Map<PoseLandmarkType, Offset> overlayLandmarks;
 
   bool get cameraReady {
@@ -118,6 +163,10 @@ class WorkoutPoseObservation {
 
     if (jumpingJack != null) {
       return personPresent && jumpingJack.baselineReady;
+    }
+
+    if (repetitionTrackingEnabled) {
+      return personPresent && !tooClose && repetitionReady;
     }
 
     return personPresent &&
@@ -162,6 +211,11 @@ class WorkoutPoseAnalyzer {
   bool? _lastDrivenRight;
   DateTime? _lastExerciseEvent;
   int _stableFrames = 0;
+
+  _PrecisionRepPhase _precisionRepPhase = _PrecisionRepPhase.waitingForStart;
+  int _precisionRepConfirmationFrames = 0;
+  DateTime? _lastPrecisionRepSignalsAt;
+
   JumpingJackPhase _jumpingJackPhase = JumpingJackPhase.waitingForClosed;
   int _jumpingJackConfirmationFrames = 0;
   bool _jumpingJackArmsOpened = false;
@@ -173,20 +227,35 @@ class WorkoutPoseAnalyzer {
   bool get _jumpingJackBaselineReady =>
       _jumpingJackKneeBaselines.length >= _jumpingJackBaselineSampleTarget;
 
+  bool get _usesPrecisionRepTracker =>
+      movementType == WorkoutMovementType.repetitions &&
+      (exercise == WorkoutExercise.pushUps ||
+          exercise == WorkoutExercise.squats ||
+          exercise == WorkoutExercise.sitUps ||
+          exercise == WorkoutExercise.lunges);
+
   void reset() {
     _jumpingJackKneeBaselines.clear();
     _jumpingJackHipYBaselines.clear();
+
+    _precisionRepPhase = _PrecisionRepPhase.waitingForStart;
+    _precisionRepConfirmationFrames = 0;
+    _lastPrecisionRepSignalsAt = null;
+
     resetRepPhase();
   }
 
-  /// Clears in-progress movement state without discarding a learned stance.
-  ///
-  /// This is used when preparation/countdown transitions into the workout so
-  /// Jumping Jacks can use the closed stance that was just calibrated.
+  /// Clears an in-progress repetition while preserving a confirmed starting
+  /// position through the preparation -> countdown transition.
   void resetRepPhase() {
     final jumpingJackWasCalibratedClosed =
         _jumpingJackPhase == JumpingJackPhase.closed &&
         _jumpingJackBaselineReady;
+    final precisionWasReady =
+        _usesPrecisionRepTracker &&
+        _precisionRepPhase == _PrecisionRepPhase.start;
+    final precisionSignalsAt = _lastPrecisionRepSignalsAt;
+
     _previous = null;
     _cycleStarted = false;
     _cycleTargetReached = false;
@@ -197,6 +266,13 @@ class WorkoutPoseAnalyzer {
     _lastDrivenRight = null;
     _lastExerciseEvent = null;
     _stableFrames = 0;
+
+    _precisionRepPhase = precisionWasReady
+        ? _PrecisionRepPhase.start
+        : _PrecisionRepPhase.waitingForStart;
+    _precisionRepConfirmationFrames = 0;
+    _lastPrecisionRepSignalsAt = precisionWasReady ? precisionSignalsAt : null;
+
     _jumpingJackPhase = jumpingJackWasCalibratedClosed
         ? JumpingJackPhase.closed
         : JumpingJackPhase.waitingForClosed;
@@ -291,27 +367,36 @@ class WorkoutPoseAnalyzer {
     var repCounted = false;
     var poseValid = false;
     var jumpingJackActivity = false;
+    var precisionRepActivity = false;
+    var repetitionSignalsAvailable = false;
+    var repetitionReady = false;
     JumpingJackDebugData? jumpingJackDebug;
 
     if (exercise == WorkoutExercise.jumpingJacks ||
+        _usesPrecisionRepTracker ||
         (coverage != WorkoutBodyCoverage.insufficient && !tooClose)) {
       switch (exercise) {
-        case WorkoutExercise.squats:
-          final angle = _averageKneeAngle(sample.landmarks);
-          repCounted = _twoPhaseCycle(
-            start: angle != null && angle >= _extendedThreshold,
-            target: angle != null && angle <= _deepKneeThreshold,
-          );
-          poseValid = angle != null && angle < _extendedThreshold;
         case WorkoutExercise.pushUps:
-          final angle = _averageElbowAngle(sample.landmarks);
-          final horizontal = _isHorizontal(sample.landmarks);
-          repCounted = _twoPhaseCycle(
-            start: horizontal && angle != null && angle >= _extendedThreshold,
-            target:
-                horizontal && angle != null && angle <= _flexedElbowThreshold,
-          );
-          poseValid = angle != null && horizontal;
+          final update = _updatePushUp(sample);
+          repCounted = update.repCounted;
+          poseValid = update.poseValid;
+          precisionRepActivity = update.exerciseActive;
+          repetitionSignalsAvailable = update.signalsAvailable;
+          repetitionReady = update.ready;
+        case WorkoutExercise.squats:
+          final update = _updateSquat(sample);
+          repCounted = update.repCounted;
+          poseValid = update.poseValid;
+          precisionRepActivity = update.exerciseActive;
+          repetitionSignalsAvailable = update.signalsAvailable;
+          repetitionReady = update.ready;
+        case WorkoutExercise.sitUps:
+          final update = _updateSitUp(sample);
+          repCounted = update.repCounted;
+          poseValid = update.poseValid;
+          precisionRepActivity = update.exerciseActive;
+          repetitionSignalsAvailable = update.signalsAvailable;
+          repetitionReady = update.ready;
         case WorkoutExercise.jumpingJacks:
           final update = _updateJumpingJack(sample);
           repCounted = update.repCounted;
@@ -319,17 +404,12 @@ class WorkoutPoseAnalyzer {
           jumpingJackActivity = update.exerciseActive;
           jumpingJackDebug = update.debug;
         case WorkoutExercise.lunges:
-          final angles = _kneeAngles(sample.landmarks);
-          final standing = angles.isNotEmpty && angles.every((a) => a >= 148);
-          final bottom = angles.any((a) => a <= _lungeThreshold);
-          repCounted = _twoPhaseCycle(start: standing, target: bottom);
-          poseValid = standing || bottom;
-        case WorkoutExercise.sitUps:
-          final hipAngle = _averageHipAngle(sample.landmarks);
-          final reclined = hipAngle != null && hipAngle >= 138;
-          final upright = hipAngle != null && hipAngle <= 92;
-          repCounted = _twoPhaseCycle(start: reclined, target: upright);
-          poseValid = reclined || upright;
+          final update = _updateLunge(sample);
+          repCounted = update.repCounted;
+          poseValid = update.poseValid;
+          precisionRepActivity = update.exerciseActive;
+          repetitionSignalsAvailable = update.signalsAvailable;
+          repetitionReady = update.ready;
         case WorkoutExercise.burpees:
           repCounted = _burpee(sample.landmarks);
           poseValid = _burpeeStage > 0;
@@ -378,6 +458,8 @@ class WorkoutPoseAnalyzer {
       WorkoutMovementType.repetitions =>
         exercise == WorkoutExercise.jumpingJacks
             ? jumpingJackActivity
+            : _usesPrecisionRepTracker
+            ? precisionRepActivity
             : repCounted || (_cycleStarted && meaningfulMovement),
     };
 
@@ -393,6 +475,9 @@ class WorkoutPoseAnalyzer {
       repCounted: repCounted,
       formFeedback: formChecking ? _formFeedback(sample.landmarks) : null,
       jumpingJackDebug: jumpingJackDebug,
+      repetitionTrackingEnabled: _usesPrecisionRepTracker,
+      repetitionSignalsAvailable: repetitionSignalsAvailable,
+      repetitionReady: repetitionReady,
       overlayLandmarks: {
         for (final entry in sample.landmarks.entries) entry.key: entry.value,
       },
@@ -415,10 +500,361 @@ class WorkoutPoseAnalyzer {
     );
   }
 
+  // ignore: duplicate_ignore
+  // ignore: unused_element
   double get _extendedThreshold => _lerp(158, 150, sensitivity);
+  // ignore: duplicate_ignore
+  // ignore: unused_element
   double get _deepKneeThreshold => _lerp(100, 112, sensitivity);
   double get _flexedElbowThreshold => _lerp(92, 105, sensitivity);
   double get _lungeThreshold => _lerp(105, 118, sensitivity);
+
+  _PrecisionRepUpdate _updatePushUp(_PoseSample sample) {
+    final points = sample.landmarks;
+    final topThreshold = _lerp(156, 150, sensitivity);
+    final bottomThreshold = _lerp(105, 115, sensitivity);
+
+    var signalsAvailable = false;
+    var validPushUpShape = false;
+    var top = false;
+    var bottom = false;
+
+    for (final right in const [false, true]) {
+      final shoulder =
+          points[right
+              ? PoseLandmarkType.rightShoulder
+              : PoseLandmarkType.leftShoulder];
+      final elbow =
+          points[right
+              ? PoseLandmarkType.rightElbow
+              : PoseLandmarkType.leftElbow];
+      final wrist =
+          points[right
+              ? PoseLandmarkType.rightWrist
+              : PoseLandmarkType.leftWrist];
+      final hip =
+          points[right ? PoseLandmarkType.rightHip : PoseLandmarkType.leftHip];
+      final knee =
+          points[right
+              ? PoseLandmarkType.rightKnee
+              : PoseLandmarkType.leftKnee];
+
+      if (shoulder == null ||
+          elbow == null ||
+          wrist == null ||
+          hip == null ||
+          knee == null) {
+        continue;
+      }
+
+      signalsAvailable = true;
+      final elbowAngle = _angle(shoulder, elbow, wrist);
+      final bodyAlignment = _angle(shoulder, hip, knee);
+      final torsoVector = shoulder - hip;
+      final horizontal = torsoVector.dx.abs() > torsoVector.dy.abs() * 0.75;
+      final straightBody = bodyAlignment >= 145;
+
+      if (horizontal && straightBody) {
+        validPushUpShape = true;
+        if (elbowAngle >= topThreshold) top = true;
+        if (elbowAngle <= bottomThreshold) bottom = true;
+      }
+    }
+
+    return _updatePrecisionRepCycle(
+      timestamp: sample.timestamp,
+      signalsAvailable: signalsAvailable,
+      startCandidate: top,
+      targetCandidate: bottom,
+      poseValid: signalsAvailable && validPushUpShape,
+    );
+  }
+
+  _PrecisionRepUpdate _updateSquat(_PoseSample sample) {
+    final points = sample.landmarks;
+    final leftHip = points[PoseLandmarkType.leftHip];
+    final rightHip = points[PoseLandmarkType.rightHip];
+    final leftKnee = points[PoseLandmarkType.leftKnee];
+    final rightKnee = points[PoseLandmarkType.rightKnee];
+    final leftAnkle = points[PoseLandmarkType.leftAnkle];
+    final rightAnkle = points[PoseLandmarkType.rightAnkle];
+    final shoulderCenter = _center(points, const [
+      PoseLandmarkType.leftShoulder,
+      PoseLandmarkType.rightShoulder,
+    ]);
+    final hipCenter = _center(points, const [
+      PoseLandmarkType.leftHip,
+      PoseLandmarkType.rightHip,
+    ]);
+    final signalsAvailable =
+        leftHip != null &&
+        rightHip != null &&
+        leftKnee != null &&
+        rightKnee != null &&
+        leftAnkle != null &&
+        rightAnkle != null &&
+        shoulderCenter != null &&
+        hipCenter != null;
+
+    if (!signalsAvailable) {
+      return _updatePrecisionRepCycle(
+        timestamp: sample.timestamp,
+        signalsAvailable: false,
+        startCandidate: false,
+        targetCandidate: false,
+        poseValid: false,
+      );
+    }
+
+    final leftAngle = _angle(leftHip, leftKnee, leftAnkle);
+    final rightAngle = _angle(rightHip, rightKnee, rightAnkle);
+    final torsoVector = shoulderCenter - hipCenter;
+    final upright = torsoVector.dy.abs() > torsoVector.dx.abs() * 0.75;
+    final angleDifference = (leftAngle - rightAngle).abs();
+    final leftThighX = (leftKnee.dx - leftHip.dx).abs();
+    final rightThighX = (rightKnee.dx - rightHip.dx).abs();
+    final leftThighY = (leftKnee.dy - leftHip.dy).abs();
+    final rightThighY = (rightKnee.dy - rightHip.dy).abs();
+    final geometryAsymmetry =
+        ((leftThighX - rightThighX).abs() + (leftThighY - rightThighY).abs()) /
+        sample.bodyScale;
+    final standingThreshold = _lerp(154, 148, sensitivity);
+    final squatDepthThreshold = _lerp(112, 126, sensitivity);
+    final standing =
+        upright &&
+        leftAngle >= standingThreshold &&
+        rightAngle >= standingThreshold;
+    final bottom =
+        upright &&
+        leftAngle <= squatDepthThreshold &&
+        rightAngle <= squatDepthThreshold &&
+        angleDifference <= 24 &&
+        geometryAsymmetry <= 0.20;
+
+    return _updatePrecisionRepCycle(
+      timestamp: sample.timestamp,
+      signalsAvailable: true,
+      startCandidate: standing,
+      targetCandidate: bottom,
+      poseValid: upright,
+    );
+  }
+
+  _PrecisionRepUpdate _updateLunge(_PoseSample sample) {
+    final points = sample.landmarks;
+    final leftHip = points[PoseLandmarkType.leftHip];
+    final rightHip = points[PoseLandmarkType.rightHip];
+    final leftKnee = points[PoseLandmarkType.leftKnee];
+    final rightKnee = points[PoseLandmarkType.rightKnee];
+    final leftAnkle = points[PoseLandmarkType.leftAnkle];
+    final rightAnkle = points[PoseLandmarkType.rightAnkle];
+    final shoulderCenter = _center(points, const [
+      PoseLandmarkType.leftShoulder,
+      PoseLandmarkType.rightShoulder,
+    ]);
+    final hipCenter = _center(points, const [
+      PoseLandmarkType.leftHip,
+      PoseLandmarkType.rightHip,
+    ]);
+    final signalsAvailable =
+        leftHip != null &&
+        rightHip != null &&
+        leftKnee != null &&
+        rightKnee != null &&
+        leftAnkle != null &&
+        rightAnkle != null &&
+        shoulderCenter != null &&
+        hipCenter != null;
+
+    if (!signalsAvailable) {
+      return _updatePrecisionRepCycle(
+        timestamp: sample.timestamp,
+        signalsAvailable: false,
+        startCandidate: false,
+        targetCandidate: false,
+        poseValid: false,
+      );
+    }
+
+    final leftAngle = _angle(leftHip, leftKnee, leftAnkle);
+    final rightAngle = _angle(rightHip, rightKnee, rightAnkle);
+    final torsoVector = shoulderCenter - hipCenter;
+    final upright = torsoVector.dy.abs() > torsoVector.dx.abs() * 0.70;
+    final angleDifference = (leftAngle - rightAngle).abs();
+    final leftThighX = (leftKnee.dx - leftHip.dx).abs();
+    final rightThighX = (rightKnee.dx - rightHip.dx).abs();
+    final leftThighY = (leftKnee.dy - leftHip.dy).abs();
+    final rightThighY = (rightKnee.dy - rightHip.dy).abs();
+    final geometryAsymmetry =
+        ((leftThighX - rightThighX).abs() + (leftThighY - rightThighY).abs()) /
+        sample.bodyScale;
+    final standingThreshold = _lerp(152, 146, sensitivity);
+    final lungeDepthThreshold = _lerp(108, 122, sensitivity);
+    final standing =
+        upright &&
+        leftAngle >= standingThreshold &&
+        rightAngle >= standingThreshold;
+    final deepestKnee = math.min(leftAngle, rightAngle);
+    final asymmetricLunge = angleDifference >= 18 || geometryAsymmetry >= 0.11;
+    final bottom =
+        upright && deepestKnee <= lungeDepthThreshold && asymmetricLunge;
+
+    return _updatePrecisionRepCycle(
+      timestamp: sample.timestamp,
+      signalsAvailable: true,
+      startCandidate: standing,
+      targetCandidate: bottom,
+      poseValid: upright,
+    );
+  }
+
+  _PrecisionRepUpdate _updateSitUp(_PoseSample sample) {
+    final points = sample.landmarks;
+    final reclinedThreshold = _lerp(140, 132, sensitivity);
+    final uprightThreshold = _lerp(92, 106, sensitivity);
+
+    var signalsAvailable = false;
+    var reclined = false;
+    var upright = false;
+
+    for (final right in const [false, true]) {
+      final shoulder =
+          points[right
+              ? PoseLandmarkType.rightShoulder
+              : PoseLandmarkType.leftShoulder];
+      final hip =
+          points[right ? PoseLandmarkType.rightHip : PoseLandmarkType.leftHip];
+      final knee =
+          points[right
+              ? PoseLandmarkType.rightKnee
+              : PoseLandmarkType.leftKnee];
+
+      if (shoulder == null || hip == null || knee == null) continue;
+
+      signalsAvailable = true;
+      final hipAngle = _angle(shoulder, hip, knee);
+      final torsoVector = shoulder - hip;
+      final torsoLength = math.max(torsoVector.distance, 0.05);
+      final torsoReclined = torsoVector.dx.abs() > torsoVector.dy.abs() * 0.55;
+      final torsoRaised = hip.dy - shoulder.dy > torsoLength * 0.30;
+
+      if (hipAngle >= reclinedThreshold && torsoReclined) reclined = true;
+      if (hipAngle <= uprightThreshold && torsoRaised) upright = true;
+    }
+
+    return _updatePrecisionRepCycle(
+      timestamp: sample.timestamp,
+      signalsAvailable: signalsAvailable,
+      startCandidate: reclined,
+      targetCandidate: upright,
+      poseValid: signalsAvailable,
+    );
+  }
+
+  _PrecisionRepUpdate _updatePrecisionRepCycle({
+    required DateTime timestamp,
+    required bool signalsAvailable,
+    required bool startCandidate,
+    required bool targetCandidate,
+    required bool poseValid,
+  }) {
+    const signalLossTolerance = Duration(milliseconds: 850);
+    const confirmationFrames = 2;
+    final previousSignalsAt = _lastPrecisionRepSignalsAt;
+
+    if (!signalsAvailable) {
+      if (previousSignalsAt != null &&
+          timestamp.difference(previousSignalsAt) > signalLossTolerance) {
+        _resetPrecisionRepPhase();
+      }
+
+      return _PrecisionRepUpdate(
+        repCounted: false,
+        poseValid: false,
+        exerciseActive: false,
+        signalsAvailable: false,
+        ready: _precisionRepPhase == _PrecisionRepPhase.start,
+      );
+    }
+
+    _lastPrecisionRepSignalsAt = timestamp;
+    final previousPhase = _precisionRepPhase;
+    var repCounted = false;
+
+    switch (_precisionRepPhase) {
+      case _PrecisionRepPhase.waitingForStart:
+        if (startCandidate) {
+          _precisionRepConfirmationFrames++;
+          if (_precisionRepConfirmationFrames >= confirmationFrames) {
+            _precisionRepPhase = _PrecisionRepPhase.start;
+            _precisionRepConfirmationFrames = 0;
+            _cycleTargetReached = false;
+          }
+        } else {
+          _precisionRepConfirmationFrames = 0;
+        }
+      case _PrecisionRepPhase.start:
+        if (targetCandidate) {
+          _precisionRepPhase = _PrecisionRepPhase.target;
+          _precisionRepConfirmationFrames = 0;
+          _cycleTargetReached = true;
+        } else if (!startCandidate) {
+          _precisionRepPhase = _PrecisionRepPhase.movingToTarget;
+          _precisionRepConfirmationFrames = 0;
+        }
+      case _PrecisionRepPhase.movingToTarget:
+        if (targetCandidate) {
+          _precisionRepPhase = _PrecisionRepPhase.target;
+          _precisionRepConfirmationFrames = 0;
+          _cycleTargetReached = true;
+        } else if (startCandidate) {
+          _precisionRepPhase = _PrecisionRepPhase.start;
+          _precisionRepConfirmationFrames = 0;
+          _cycleTargetReached = false;
+        }
+      case _PrecisionRepPhase.target:
+        if (startCandidate) {
+          _precisionRepPhase = _PrecisionRepPhase.returning;
+          _precisionRepConfirmationFrames = 1;
+        }
+      case _PrecisionRepPhase.returning:
+        if (startCandidate) {
+          _precisionRepConfirmationFrames++;
+          if (_precisionRepConfirmationFrames >= confirmationFrames) {
+            _precisionRepPhase = _PrecisionRepPhase.start;
+            _precisionRepConfirmationFrames = 0;
+            _cycleTargetReached = false;
+            repCounted = true;
+          }
+        } else if (targetCandidate) {
+          _precisionRepPhase = _PrecisionRepPhase.target;
+          _precisionRepConfirmationFrames = 0;
+        } else {
+          _precisionRepConfirmationFrames = 0;
+        }
+    }
+
+    final exerciseActive =
+        repCounted ||
+        previousPhase != _precisionRepPhase ||
+        _precisionRepPhase == _PrecisionRepPhase.movingToTarget ||
+        _precisionRepPhase == _PrecisionRepPhase.target ||
+        _precisionRepPhase == _PrecisionRepPhase.returning;
+
+    return _PrecisionRepUpdate(
+      repCounted: repCounted,
+      poseValid: poseValid,
+      exerciseActive: exerciseActive,
+      signalsAvailable: true,
+      ready: _precisionRepPhase == _PrecisionRepPhase.start,
+    );
+  }
+
+  void _resetPrecisionRepPhase() {
+    _precisionRepPhase = _PrecisionRepPhase.waitingForStart;
+    _precisionRepConfirmationFrames = 0;
+    _cycleTargetReached = false;
+  }
 
   bool _twoPhaseCycle({required bool start, required bool target}) {
     if (start) {
@@ -534,15 +970,41 @@ class WorkoutPoseAnalyzer {
               PoseLandmarkType.leftElbow,
               PoseLandmarkType.leftWrist,
               PoseLandmarkType.leftHip,
+              PoseLandmarkType.leftKnee,
             ]) ||
             _completeSide(points, const [
               PoseLandmarkType.rightShoulder,
               PoseLandmarkType.rightElbow,
               PoseLandmarkType.rightWrist,
               PoseLandmarkType.rightHip,
+              PoseLandmarkType.rightKnee,
             ]),
-      WorkoutExercise.squats ||
-      WorkoutExercise.lunges ||
+      WorkoutExercise.squats || WorkoutExercise.lunges =>
+        _completeSide(points, const [
+              PoseLandmarkType.leftHip,
+              PoseLandmarkType.leftKnee,
+              PoseLandmarkType.leftAnkle,
+            ]) &&
+            _completeSide(points, const [
+              PoseLandmarkType.rightHip,
+              PoseLandmarkType.rightKnee,
+              PoseLandmarkType.rightAnkle,
+            ]) &&
+            _hasAny(points, const [
+              PoseLandmarkType.leftShoulder,
+              PoseLandmarkType.rightShoulder,
+            ]),
+      WorkoutExercise.sitUps =>
+        _completeSide(points, const [
+              PoseLandmarkType.leftShoulder,
+              PoseLandmarkType.leftHip,
+              PoseLandmarkType.leftKnee,
+            ]) ||
+            _completeSide(points, const [
+              PoseLandmarkType.rightShoulder,
+              PoseLandmarkType.rightHip,
+              PoseLandmarkType.rightKnee,
+            ]),
       WorkoutExercise.wallSit => _kneeAngles(points).isNotEmpty,
       WorkoutExercise.plank => _bodyAlignmentAngles(points).isNotEmpty,
       WorkoutExercise.jumpingJacks => _hasJumpingJackSignals(points),
@@ -956,6 +1418,8 @@ class WorkoutPoseAnalyzer {
         PoseLandmarkType.rightWrist,
         PoseLandmarkType.leftHip,
         PoseLandmarkType.rightHip,
+        PoseLandmarkType.leftKnee,
+        PoseLandmarkType.rightKnee,
       ],
       WorkoutExercise.jumpingJacks => const [
         PoseLandmarkType.leftShoulder,
@@ -1029,6 +1493,22 @@ class WorkoutPoseAnalyzer {
         ? values[middle]
         : (values[middle - 1] + values[middle]) / 2;
   }
+}
+
+class _PrecisionRepUpdate {
+  const _PrecisionRepUpdate({
+    required this.repCounted,
+    required this.poseValid,
+    required this.exerciseActive,
+    required this.signalsAvailable,
+    required this.ready,
+  });
+
+  final bool repCounted;
+  final bool poseValid;
+  final bool exerciseActive;
+  final bool signalsAvailable;
+  final bool ready;
 }
 
 class _JumpingJackUpdate {

@@ -520,6 +520,8 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   late final FixedExtentScrollController _secondsController;
 
+  late final FixedExtentScrollController _repGoalController;
+
   int hours = 0;
   int minutes = 0;
   int seconds = 0;
@@ -527,6 +529,8 @@ class _NewTaskPageState extends State<NewTaskPage> {
   late final ValueNotifier<int> _hoursValue;
   late final ValueNotifier<int> _minutesValue;
   late final ValueNotifier<int> _secondsValue;
+
+  late final ValueNotifier<int> _repGoalValue;
 
   // ===========================================================
   // SCHEDULE
@@ -612,11 +616,17 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
     _secondsController = FixedExtentScrollController(initialItem: seconds);
 
+    _repGoalController = FixedExtentScrollController(
+      initialItem: workoutRepGoal - 1,
+    );
+
     _hoursValue = ValueNotifier(hours);
 
     _minutesValue = ValueNotifier(minutes);
 
     _secondsValue = ValueNotifier(seconds);
+
+    _repGoalValue = ValueNotifier(workoutRepGoal);
 
     _sensitivityValue = ValueNotifier(sensitivity);
   }
@@ -631,11 +641,15 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
     _secondsController.dispose();
 
+    _repGoalController.dispose();
+
     _hoursValue.dispose();
 
     _minutesValue.dispose();
 
     _secondsValue.dispose();
+
+    _repGoalValue.dispose();
 
     _sensitivityValue.dispose();
 
@@ -965,10 +979,6 @@ class _NewTaskPageState extends State<NewTaskPage> {
         const _SectionTitle('Workout Setup'),
 
         const SizedBox(height: 12),
-
-        _buildWorkoutMovementType(),
-
-        const SizedBox(height: 16),
 
         _buildExerciseAndGoal(),
 
@@ -2248,6 +2258,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
     });
   }
 
+  // ignore: unused_element
   Widget _buildWorkoutMovementType() {
     return Row(
       children: [
@@ -2294,32 +2305,13 @@ class _NewTaskPageState extends State<NewTaskPage> {
     );
   }
 
-  List<WorkoutExercise> get _availableWorkoutExercises {
-    switch (workoutMovementType) {
-      case WorkoutMovementType.repetitions:
-        return const [
-          WorkoutExercise.pushUps,
-          WorkoutExercise.squats,
-          WorkoutExercise.jumpingJacks,
-          WorkoutExercise.lunges,
-          WorkoutExercise.sitUps,
-          WorkoutExercise.burpees,
-          WorkoutExercise.mountainClimbers,
-          WorkoutExercise.highKnees,
-        ];
-
-      case WorkoutMovementType.hold:
-        return const [WorkoutExercise.plank, WorkoutExercise.wallSit];
-
-      case WorkoutMovementType.continuous:
-        return const [
-          WorkoutExercise.runningInPlace,
-          WorkoutExercise.jumpRope,
-          WorkoutExercise.highKnees,
-          WorkoutExercise.jumpingJacks,
-        ];
-    }
-  }
+  List<WorkoutExercise> get _availableWorkoutExercises => const [
+    WorkoutExercise.pushUps,
+    WorkoutExercise.squats,
+    WorkoutExercise.sitUps,
+    WorkoutExercise.jumpingJacks,
+    WorkoutExercise.lunges,
+  ];
 
   String _workoutExerciseLabel(WorkoutExercise exercise) {
     switch (exercise) {
@@ -2378,13 +2370,6 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   Widget _buildExerciseAndGoal() {
     final exercises = _availableWorkoutExercises;
-    const durationGoals = [
-      Duration(seconds: 30),
-      Duration(minutes: 1),
-      Duration(minutes: 2),
-      Duration(minutes: 5),
-      Duration(minutes: 10),
-    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2440,110 +2425,43 @@ class _NewTaskPageState extends State<NewTaskPage> {
           ),
         ),
 
-        if (workoutMovementType == WorkoutMovementType.repetitions) ...[
-          const SizedBox(height: 18),
+        const SizedBox(height: 18),
 
-          const Text(
-            'Goal (Repetitions)',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-          ),
+        const Text(
+          'Goal (Repetitions)',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
 
-          const SizedBox(height: 8),
+        const SizedBox(height: 8),
 
-          Container(
-            height: 60,
+        Center(
+          child: Container(
+            width: 120,
+            height: 154,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             decoration: BoxDecoration(
+              color: widget.isDarkMode ? _T.surface : Colors.white,
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+                width: 1.2,
               ),
-              borderRadius: BorderRadius.circular(12),
             ),
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: () {
-                    if (workoutRepGoal <= 1) {
-                      return;
-                    }
-
-                    setState(() {
-                      workoutRepGoal--;
-                    });
+            child: ValueListenableBuilder<int>(
+              valueListenable: _repGoalValue,
+              builder: (context, value, child) {
+                return _RepGoalWheel(
+                  controller: _repGoalController,
+                  selectedValue: value,
+                  onChanged: (newValue) {
+                    workoutRepGoal = newValue;
+                    _repGoalValue.value = newValue;
                   },
-                  icon: const Icon(Icons.remove_rounded),
-                ),
-
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '$workoutRepGoal',
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const Text(
-                        'REPS',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Color(0xFF777A84),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      workoutRepGoal++;
-                    });
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                ),
-              ],
+                );
+              },
             ),
           ),
-        ] else ...[
-          const SizedBox(height: 18),
-          Text(
-            workoutMovementType == WorkoutMovementType.hold
-                ? 'Hold Goal'
-                : 'Activity Goal',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<Duration>(
-                value: workoutTargetDuration,
-                isExpanded: true,
-                items: durationGoals
-                    .map(
-                      (duration) => DropdownMenuItem(
-                        value: duration,
-                        child: Text(_durationOptionLabel(duration)),
-                      ),
-                    )
-                    .toList(growable: false),
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() => workoutTargetDuration = value);
-                },
-              ),
-            ),
-          ),
-        ],
+        ),
       ],
     );
   }
@@ -4273,6 +4191,70 @@ class _ProBadge extends StatelessWidget {
 // =============================================================
 // DURATION COMPONENTS
 // =============================================================
+
+class _RepGoalWheel extends StatelessWidget {
+  const _RepGoalWheel({
+    required this.controller,
+    required this.selectedValue,
+    required this.onChanged,
+  });
+
+  final FixedExtentScrollController controller;
+  final int selectedValue;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 112,
+          child: ListWheelScrollView.useDelegate(
+            controller: controller,
+            itemExtent: 36,
+            physics: const FixedExtentScrollPhysics(),
+            perspective: 0.003,
+            diameterRatio: 1.35,
+            onSelectedItemChanged: (index) {
+              onChanged(index + 1);
+            },
+            childDelegate: ListWheelChildBuilderDelegate(
+              childCount: 200,
+              builder: (context, index) {
+                final value = index + 1;
+                final selected = value == selectedValue;
+
+                return Center(
+                  child: Text(
+                    '$value',
+                    style: TextStyle(
+                      fontSize: selected ? 30 : 16,
+                      fontWeight: selected ? FontWeight.w900 : FontWeight.w500,
+                      color: selected
+                          ? Theme.of(context).colorScheme.onSurface
+                          : const Color(0xFF8D9099),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 4),
+
+        const Text(
+          'REPS',
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF777A84),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _DurationWheel extends StatelessWidget {
   const _DurationWheel({
