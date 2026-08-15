@@ -52,6 +52,13 @@ enum TaskStatus { ready, scheduled, live, completed }
 
 enum TaskMode { focus, active, workout }
 
+enum FocusActivity {
+  general,
+  reading,
+  writingNotes,
+  computerWork,
+}
+
 enum ActivityLevel { light, moderate, high }
 
 enum WorkoutMovementType { repetitions, hold, continuous }
@@ -84,27 +91,53 @@ class PoseReference {
     this.headYaw,
     this.headPitch,
     this.headRoll,
+    this.faceDetected = false,
+    this.faceTrackingEnabled = false,
+    this.bodyAxisAngle,
   });
 
-  // Whatever body landmarks were visible when the reference was captured.
-  // No particular body part is required.
   final Map<PoseLandmarkType, Offset> landmarks;
 
-  // Overall position of the detected person in the frame.
   final double centerX;
   final double centerY;
-
-  // Approximate size/spread of the visible pose.
   final double poseScale;
 
-  // Optional face orientation.
-  // Face detection improves verification, but is NOT required
-  // in order to save a reference.
   final double? headYaw;
   final double? headPitch;
   final double? headRoll;
+
+  final bool faceDetected;
+  final bool faceTrackingEnabled;
+
+  final double? bodyAxisAngle;
 }
 
+class FocusPoseMetrics {
+  const FocusPoseMetrics({
+    required this.commonLandmarkCount,
+    required this.requiredLandmarkCount,
+    required this.centerMovement,
+    required this.scaleDifference,
+    this.structuralDeviation,
+    this.bodyAxisDifference,
+  });
+
+  final int commonLandmarkCount;
+  final int requiredLandmarkCount;
+
+  final double centerMovement;
+  final double scaleDifference;
+
+  final double? structuralDeviation;
+  final double? bodyAxisDifference;
+
+  bool get hasEnoughCoverage =>
+      commonLandmarkCount >= requiredLandmarkCount;
+}
+
+// =============================================================
+// TASK DATA
+// =============================================================
 // =============================================================
 // TASK DATA
 // =============================================================
@@ -158,6 +191,7 @@ class TaskData {
     required this.objectInFrame,
     required this.alarm,
     required this.sensitivity,
+    this.focusActivity = FocusActivity.general,
     this.poseReference,
     this.requiredObjectIds = const [],
     this.activeConfig,
@@ -188,6 +222,8 @@ class TaskData {
 
   final String alarm;
   final double sensitivity;
+
+  final FocusActivity focusActivity;
 
   // Mutable because a task can calibrate when
   // the live session starts.
@@ -368,8 +404,64 @@ class MlKitCameraImageConverter {
 // =============================================================
 
 class TaskPoseAnalyzer {
+  static const double _landmarkLikelihood = 0.35;
+
+  // Landmarks useful for comparing major posture changes.
+  // Hands/wrists are intentionally excluded because normal
+  // writing/reaching should not drastically affect posture.
+  static const Set<PoseLandmarkType> _structuralTypes = {
+    PoseLandmarkType.nose,
+    PoseLandmarkType.leftEar,
+    PoseLandmarkType.rightEar,
+    PoseLandmarkType.leftShoulder,
+    PoseLandmarkType.rightShoulder,
+    PoseLandmarkType.leftHip,
+    PoseLandmarkType.rightHip,
+    PoseLandmarkType.leftKnee,
+    PoseLandmarkType.rightKnee,
+    PoseLandmarkType.leftAnkle,
+    PoseLandmarkType.rightAnkle,
+  };
+
+  // Prefer these landmarks for determining whether the person
+  // moved out of their focus area. Elbows/wrists are excluded
+  // because they move naturally while studying.
+  static const Set<PoseLandmarkType> _positionAnchorTypes = {
+    PoseLandmarkType.nose,
+    PoseLandmarkType.leftEye,
+    PoseLandmarkType.rightEye,
+    PoseLandmarkType.leftEar,
+    PoseLandmarkType.rightEar,
+    PoseLandmarkType.leftShoulder,
+    PoseLandmarkType.rightShoulder,
+    PoseLandmarkType.leftHip,
+    PoseLandmarkType.rightHip,
+    PoseLandmarkType.leftKnee,
+    PoseLandmarkType.rightKnee,
+    PoseLandmarkType.leftAnkle,
+    PoseLandmarkType.rightAnkle,
+  };
+
+  // Used only when the normal shoulder/hip body axis
+  // cannot be calculated.
+  static const Set<PoseLandmarkType> _orientationFallbackTypes = {
+    PoseLandmarkType.nose,
+    PoseLandmarkType.leftEar,
+    PoseLandmarkType.rightEar,
+    PoseLandmarkType.leftShoulder,
+    PoseLandmarkType.rightShoulder,
+    PoseLandmarkType.leftElbow,
+    PoseLandmarkType.rightElbow,
+    PoseLandmarkType.leftHip,
+    PoseLandmarkType.rightHip,
+    PoseLandmarkType.leftKnee,
+    PoseLandmarkType.rightKnee,
+    PoseLandmarkType.leftAnkle,
+    PoseLandmarkType.rightAnkle,
+  };
+
   // ===========================================================
-  // CREATE REFERENCE/OBSERVATION
+  // CREATE ONE LIVE SNAPSHOT
   // ===========================================================
 
   static PoseReference? createSnapshot({
@@ -377,18 +469,22 @@ class TaskPoseAnalyzer {
     required List<Face> faces,
     required Size imageSize,
   }) {
-    if (poses.isEmpty || imageSize.width <= 0 || imageSize.height <= 0) {
+    if (poses.isEmpty ||
+        imageSize.width <= 0 ||
+        imageSize.height <= 0) {
       return null;
     }
 
     Pose? bestPose;
-    int bestVisibleCount = 0;
+    var bestVisibleCount = 0;
 
+    // Select the pose that has the most confidently
+    // visible landmarks.
     for (final pose in poses) {
-      int visibleCount = 0;
+      var visibleCount = 0;
 
       for (final landmark in pose.landmarks.values) {
-        if (landmark.likelihood >= 0.35) {
+        if (landmark.likelihood >= _landmarkLikelihood) {
           visibleCount++;
         }
       }
@@ -399,20 +495,17 @@ class TaskPoseAnalyzer {
       }
     }
 
-    if (bestPose == null) {
+    if (bestPose == null || bestVisibleCount < 4) {
       return null;
     }
 
-    if (bestVisibleCount < 4) {
-      return null;
-    }
-
-    final visibleLandmarks = <PoseLandmarkType, Offset>{};
+    final visibleLandmarks =
+        <PoseLandmarkType, Offset>{};
 
     for (final entry in bestPose.landmarks.entries) {
       final landmark = entry.value;
 
-      if (landmark.likelihood < 0.35) {
+      if (landmark.likelihood < _landmarkLikelihood) {
         continue;
       }
 
@@ -426,72 +519,748 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    double totalX = 0;
-    double totalY = 0;
+    final geometry =
+        _geometryFor(visibleLandmarks);
 
-    for (final point in visibleLandmarks.values) {
-      totalX += point.dx;
-      totalY += point.dy;
-    }
+    // Associate the face with the selected body instead of
+    // blindly choosing the largest face in the frame.
+    final face = _selectFaceForPose(
+      pose: bestPose,
+      faces: faces,
+      imageSize: imageSize,
+    );
 
-    final centerX = totalX / visibleLandmarks.length;
-    final centerY = totalY / visibleLandmarks.length;
-
-    double totalDistanceSquared = 0;
-
-    for (final point in visibleLandmarks.values) {
-      final dx = point.dx - centerX;
-      final dy = point.dy - centerY;
-
-      totalDistanceSquared += (dx * dx) + (dy * dy);
-    }
-
-    final poseScale = math.sqrt(totalDistanceSquared / visibleLandmarks.length);
-
-    Face? face;
-
-    if (faces.isNotEmpty) {
-      face = faces.reduce((a, b) {
-        final areaA = a.boundingBox.width * a.boundingBox.height;
-
-        final areaB = b.boundingBox.width * b.boundingBox.height;
-
-        return areaA >= areaB ? a : b;
-      });
-    }
+    final hasFaceOrientation =
+        face != null &&
+        (
+          face.headEulerAngleY != null ||
+          face.headEulerAngleX != null
+        );
 
     return PoseReference(
       landmarks: visibleLandmarks,
-      centerX: centerX,
-      centerY: centerY,
-      poseScale: poseScale,
+      centerX: geometry.center.dx,
+      centerY: geometry.center.dy,
+      poseScale: geometry.scale,
       headYaw: face?.headEulerAngleY,
       headPitch: face?.headEulerAngleX,
       headRoll: face?.headEulerAngleZ,
+      faceDetected: face != null,
+      faceTrackingEnabled: hasFaceOrientation,
+      bodyAxisAngle:
+          _bodyAxisAngleFor(visibleLandmarks),
     );
   }
 
   // ===========================================================
-  // LANDMARK QUALITY
+  // BUILD ADAPTIVE REFERENCE
   // ===========================================================
+
+  static PoseReference? buildAdaptiveReference(
+    List<PoseReference> samples,
+  ) {
+    final validSamples = samples
+        .where(
+          (sample) => sample.landmarks.length >= 3,
+        )
+        .toList(growable: false);
+
+    // Don't calibrate from one accidental frame.
+    if (validSamples.length < 4) {
+      return null;
+    }
+
+    // A landmark must be present in at least 65% of
+    // calibration frames to become part of the reference.
+    final requiredAppearances =
+        (validSamples.length * 0.65).ceil();
+
+    final counts =
+        <PoseLandmarkType, int>{};
+
+    for (final sample in validSamples) {
+      for (final type in sample.landmarks.keys) {
+        counts.update(
+          type,
+          (value) => value + 1,
+          ifAbsent: () => 1,
+        );
+      }
+    }
+
+    final stableTypes = counts.entries
+        .where(
+          (entry) =>
+              entry.value >= requiredAppearances,
+        )
+        .map((entry) => entry.key)
+        .toList(growable: false);
+
+    if (stableTypes.length < 3) {
+      return null;
+    }
+
+    final averagedLandmarks =
+        <PoseLandmarkType, Offset>{};
+
+    for (final type in stableTypes) {
+      var totalX = 0.0;
+      var totalY = 0.0;
+      var count = 0;
+
+      for (final sample in validSamples) {
+        final point = sample.landmarks[type];
+
+        if (point == null) {
+          continue;
+        }
+
+        totalX += point.dx;
+        totalY += point.dy;
+        count++;
+      }
+
+      if (count > 0) {
+        averagedLandmarks[type] = Offset(
+          totalX / count,
+          totalY / count,
+        );
+      }
+    }
+
+    if (averagedLandmarks.length < 3) {
+      return null;
+    }
+
+    final geometry =
+        _geometryFor(averagedLandmarks);
+
+    // Face tracking is enabled ONLY if the face was
+    // consistently usable during calibration.
+    final faceSamples = validSamples
+        .where(
+          (sample) =>
+              sample.faceDetected &&
+              (
+                sample.headYaw != null ||
+                sample.headPitch != null
+              ),
+        )
+        .toList(growable: false);
+
+    final requiredFaceSamples = math.max(
+      3,
+      (validSamples.length * 0.55).ceil(),
+    );
+
+    final faceTrackingEnabled =
+        faceSamples.length >= requiredFaceSamples;
+
+    return PoseReference(
+      landmarks: averagedLandmarks,
+      centerX: geometry.center.dx,
+      centerY: geometry.center.dy,
+      poseScale: geometry.scale,
+
+      headYaw: faceTrackingEnabled
+          ? _averageNullable(
+              faceSamples.map(
+                (sample) => sample.headYaw,
+              ),
+            )
+          : null,
+
+      headPitch: faceTrackingEnabled
+          ? _averageNullable(
+              faceSamples.map(
+                (sample) => sample.headPitch,
+              ),
+            )
+          : null,
+
+      headRoll: faceTrackingEnabled
+          ? _averageNullable(
+              faceSamples.map(
+                (sample) => sample.headRoll,
+              ),
+            )
+          : null,
+
+      faceDetected: faceTrackingEnabled,
+      faceTrackingEnabled: faceTrackingEnabled,
+
+      bodyAxisAngle:
+          _bodyAxisAngleFor(averagedLandmarks),
+    );
+  }
+
+  // ===========================================================
+  // COMPARE LIVE POSITION TO REFERENCE
+  // ===========================================================
+
+  static FocusPoseMetrics compareToReference({
+    required PoseReference reference,
+    required PoseReference current,
+  }) {
+    // Only compare landmarks that belonged to the
+    // calibrated reference AND still exist now.
+    final commonTypes = reference.landmarks.keys
+        .where(current.landmarks.containsKey)
+        .toList(growable: false);
+
+    final requiredCount = math.max(
+      3,
+      (reference.landmarks.length * 0.50).ceil(),
+    );
+
+    if (commonTypes.length < 3) {
+      return FocusPoseMetrics(
+        commonLandmarkCount:
+            commonTypes.length,
+        requiredLandmarkCount:
+            requiredCount,
+        centerMovement:
+            double.infinity,
+        scaleDifference:
+            double.infinity,
+      );
+    }
+
+    final referenceCommon =
+        <PoseLandmarkType, Offset>{
+      for (final type in commonTypes)
+        type: reference.landmarks[type]!,
+    };
+
+    final currentCommon =
+        <PoseLandmarkType, Offset>{
+      for (final type in commonTypes)
+        type: current.landmarks[type]!,
+    };
+
+    // Prefer stable head/torso/leg anchors for location.
+    // Hands and elbows should not move the person's
+    // calculated focus area while writing.
+    final preferredPositionTypes = commonTypes
+        .where(_positionAnchorTypes.contains)
+        .toList(growable: false);
+
+    final positionTypes =
+        preferredPositionTypes.length >= 2
+        ? preferredPositionTypes
+        : commonTypes;
+
+    final referencePosition =
+        <PoseLandmarkType, Offset>{
+      for (final type in positionTypes)
+        type: reference.landmarks[type]!,
+    };
+
+    final currentPosition =
+        <PoseLandmarkType, Offset>{
+      for (final type in positionTypes)
+        type: current.landmarks[type]!,
+    };
+
+    final referenceGeometry =
+        _geometryFor(referencePosition);
+
+    final currentGeometry =
+        _geometryFor(currentPosition);
+
+    final centerMovement =
+        (
+          currentGeometry.center -
+          referenceGeometry.center
+        ).distance;
+
+    final scaleDifference =
+        referenceGeometry.scale <= 0.001
+        ? 0.0
+        : (
+            (
+              currentGeometry.scale -
+              referenceGeometry.scale
+            ).abs() /
+            referenceGeometry.scale
+          );
+
+    // =========================================================
+    // MAJOR POSTURE CHANGE
+    // =========================================================
+
+    final structuralTypes = commonTypes
+        .where(_structuralTypes.contains)
+        .toList(growable: false);
+
+    double? structuralDeviation;
+
+    if (structuralTypes.length >= 3) {
+      final refStructural =
+          <PoseLandmarkType, Offset>{
+        for (final type in structuralTypes)
+          type: reference.landmarks[type]!,
+      };
+
+      final curStructural =
+          <PoseLandmarkType, Offset>{
+        for (final type in structuralTypes)
+          type: current.landmarks[type]!,
+      };
+
+      final refGeometry =
+          _geometryFor(refStructural);
+
+      final curGeometry =
+          _geometryFor(curStructural);
+
+      if (refGeometry.scale > 0.001 &&
+          curGeometry.scale > 0.001) {
+        var totalDeviation = 0.0;
+
+        for (final type in structuralTypes) {
+          final refPoint =
+              (
+                refStructural[type]! -
+                refGeometry.center
+              ) /
+              refGeometry.scale;
+
+          final curPoint =
+              (
+                curStructural[type]! -
+                curGeometry.center
+              ) /
+              curGeometry.scale;
+
+          totalDeviation +=
+              (curPoint - refPoint).distance;
+        }
+
+        structuralDeviation =
+            totalDeviation /
+            structuralTypes.length;
+      }
+    }
+
+    // =========================================================
+    // BODY ORIENTATION
+    // =========================================================
+
+    final referenceAxis =
+        _bodyAxisAngleFor(referenceCommon);
+
+    final currentAxis =
+        _bodyAxisAngleFor(currentCommon);
+
+    final bodyAxisDifference =
+        referenceAxis != null &&
+        currentAxis != null
+        ? _axisAngleDifference(
+            referenceAxis,
+            currentAxis,
+          )
+        : null;
+
+    return FocusPoseMetrics(
+      commonLandmarkCount:
+          commonTypes.length,
+      requiredLandmarkCount:
+          requiredCount,
+      centerMovement:
+          centerMovement,
+      scaleDifference:
+          scaleDifference,
+      structuralDeviation:
+          structuralDeviation,
+      bodyAxisDifference:
+          bodyAxisDifference,
+    );
+  }
+
+  // ===========================================================
+  // HAND/FIDGET MOVEMENT
+  // ===========================================================
+
+  static double handMotion({
+    required PoseReference reference,
+    required PoseReference current,
+    PoseReference? previous,
+  }) {
+    if (previous == null) {
+      return 0.0;
+    }
+
+    const wristTypes = {
+      PoseLandmarkType.leftWrist,
+      PoseLandmarkType.rightWrist,
+    };
+
+    var total = 0.0;
+    var count = 0;
+
+    for (final type in wristTypes) {
+      // Only use a wrist if it belonged to the
+      // original calibrated view.
+      if (!reference.landmarks.containsKey(type)) {
+        continue;
+      }
+
+      final currentPoint =
+          current.landmarks[type];
+
+      final previousPoint =
+          previous.landmarks[type];
+
+      if (currentPoint == null ||
+          previousPoint == null) {
+        continue;
+      }
+
+      total +=
+          (currentPoint - previousPoint).distance;
+
+      count++;
+    }
+
+    if (count == 0) {
+      return 0.0;
+    }
+
+    // Normalize movement based on apparent body size,
+    // so moving closer to the camera doesn't drastically
+    // change fidget sensitivity.
+    final normalizer =
+        math.max(reference.poseScale, 0.03);
+
+    return (total / count) / normalizer;
+  }
+
+  // ===========================================================
+  // MATCH FACE TO SELECTED PERSON
+  // ===========================================================
+
+  static Face? _selectFaceForPose({
+    required Pose pose,
+    required List<Face> faces,
+    required Size imageSize,
+  }) {
+    if (faces.isEmpty) {
+      return null;
+    }
+
+    final nose =
+        pose.landmarks[PoseLandmarkType.nose];
+
+    // If there is no reliable nose, don't risk attaching
+    // someone else's face to this body.
+    if (nose == null ||
+        nose.likelihood < _landmarkLikelihood) {
+      return null;
+    }
+
+    final headPoint =
+        Offset(nose.x, nose.y);
+
+    Face? bestFace;
+    var bestDistance = double.infinity;
+
+    for (final face in faces) {
+      final distance =
+          (
+            face.boundingBox.center -
+            headPoint
+          ).distance;
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestFace = face;
+      }
+    }
+
+    if (bestFace == null) {
+      return null;
+    }
+
+    final shortSide = math.min(
+      imageSize.width,
+      imageSize.height,
+    );
+
+    // Only accept the face if it is actually close
+    // to the selected pose's head.
+    if (
+      bestFace.boundingBox
+              .inflate(shortSide * 0.04)
+              .contains(headPoint) ||
+      bestDistance <= shortSide * 0.22
+    ) {
+      return bestFace;
+    }
+
+    return null;
+  }
+
+  // ===========================================================
+  // BODY ORIENTATION
+  // ===========================================================
+
+  static double? _bodyAxisAngleFor(
+    Map<PoseLandmarkType, Offset> landmarks,
+  ) {
+    final shoulderMid = _midpoint(
+      landmarks[
+          PoseLandmarkType.leftShoulder],
+      landmarks[
+          PoseLandmarkType.rightShoulder],
+    );
+
+    final hipMid = _midpoint(
+      landmarks[
+          PoseLandmarkType.leftHip],
+      landmarks[
+          PoseLandmarkType.rightHip],
+    );
+
+    Offset? upper;
+    Offset? lower;
+
+    // Best case: shoulders -> hips.
+    if (shoulderMid != null &&
+        hipMid != null) {
+      upper = shoulderMid;
+      lower = hipMid;
+    } else {
+      final nose =
+          landmarks[PoseLandmarkType.nose];
+
+      // Good for upper-body-only camera views.
+      if (nose != null &&
+          shoulderMid != null) {
+        upper = nose;
+        lower = shoulderMid;
+      } else {
+        final leftShoulder =
+            landmarks[
+                PoseLandmarkType.leftShoulder];
+
+        final leftHip =
+            landmarks[
+                PoseLandmarkType.leftHip];
+
+        final rightShoulder =
+            landmarks[
+                PoseLandmarkType.rightShoulder];
+
+        final rightHip =
+            landmarks[
+                PoseLandmarkType.rightHip];
+
+        if (leftShoulder != null &&
+            leftHip != null) {
+          upper = leftShoulder;
+          lower = leftHip;
+        } else if (
+          rightShoulder != null &&
+          rightHip != null
+        ) {
+          upper = rightShoulder;
+          lower = rightHip;
+        }
+      }
+    }
+
+    if (upper != null &&
+        lower != null) {
+      final delta = lower - upper;
+
+      if (delta.distance >= 0.01) {
+        return math.atan2(
+              delta.dy,
+              delta.dx,
+            ) *
+            180 /
+            math.pi;
+      }
+    }
+
+    // Fallback for unusual framing, for example
+    // shoulders + elbows but no hips/head.
+    final fallbackPoints = landmarks.entries
+        .where(
+          (entry) =>
+              _orientationFallbackTypes
+                  .contains(entry.key),
+        )
+        .map((entry) => entry.value)
+        .toList(growable: false);
+
+    if (fallbackPoints.length < 4) {
+      return null;
+    }
+
+    var meanX = 0.0;
+    var meanY = 0.0;
+
+    for (final point in fallbackPoints) {
+      meanX += point.dx;
+      meanY += point.dy;
+    }
+
+    meanX /= fallbackPoints.length;
+    meanY /= fallbackPoints.length;
+
+    var covarianceXX = 0.0;
+    var covarianceYY = 0.0;
+    var covarianceXY = 0.0;
+
+    for (final point in fallbackPoints) {
+      final dx = point.dx - meanX;
+      final dy = point.dy - meanY;
+
+      covarianceXX += dx * dx;
+      covarianceYY += dy * dy;
+      covarianceXY += dx * dy;
+    }
+
+    if (
+      (covarianceXX + covarianceYY) <
+      0.0001
+    ) {
+      return null;
+    }
+
+    return 0.5 *
+        math.atan2(
+          2 * covarianceXY,
+          covarianceXX - covarianceYY,
+        ) *
+        180 /
+        math.pi;
+  }
+
+  static double _axisAngleDifference(
+    double first,
+    double second,
+  ) {
+    final difference =
+        angleDifference(first, second);
+
+    // A body axis has no arrow direction:
+    // 0° and 180° represent the same line.
+    return difference > 90
+        ? 180 - difference
+        : difference;
+  }
+
+  static Offset? _midpoint(
+    Offset? first,
+    Offset? second,
+  ) {
+    if (first == null ||
+        second == null) {
+      return null;
+    }
+
+    return Offset(
+      (first.dx + second.dx) / 2,
+      (first.dy + second.dy) / 2,
+    );
+  }
+
+  // ===========================================================
+  // GEOMETRY
+  // ===========================================================
+
+  static _PoseGeometry _geometryFor(
+    Map<PoseLandmarkType, Offset> landmarks,
+  ) {
+    var totalX = 0.0;
+    var totalY = 0.0;
+
+    for (final point in landmarks.values) {
+      totalX += point.dx;
+      totalY += point.dy;
+    }
+
+    final center = Offset(
+      totalX / landmarks.length,
+      totalY / landmarks.length,
+    );
+
+    var totalDistanceSquared = 0.0;
+
+    for (final point in landmarks.values) {
+      final delta = point - center;
+
+      totalDistanceSquared +=
+          (delta.dx * delta.dx) +
+          (delta.dy * delta.dy);
+    }
+
+    final scale = math.sqrt(
+      totalDistanceSquared /
+      landmarks.length,
+    );
+
+    return _PoseGeometry(
+      center: center,
+      scale: scale,
+    );
+  }
+
+  static double? _averageNullable(
+    Iterable<double?> values,
+  ) {
+    var total = 0.0;
+    var count = 0;
+
+    for (final value in values) {
+      if (value == null) {
+        continue;
+      }
+
+      total += value;
+      count++;
+    }
+
+    return count == 0
+        ? null
+        : total / count;
+  }
 
   // ===========================================================
   // ANGLE DIFFERENCE
   // ===========================================================
 
-  static double angleDifference(double first, double second) {
-    var difference = (first - second).abs();
+  static double angleDifference(
+    double first,
+    double second,
+  ) {
+    var difference =
+        (first - second).abs();
 
     while (difference > 360) {
       difference -= 360;
     }
 
     if (difference > 180) {
-      difference = 360 - difference;
+      difference =
+          360 - difference;
     }
 
     return difference.abs();
   }
+}
+
+class _PoseGeometry {
+  const _PoseGeometry({
+    required this.center,
+    required this.scale,
+  });
+
+  final Offset center;
+  final double scale;
 }
 
 // =============================================================
@@ -556,16 +1325,16 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   TaskMode selectedMode = TaskMode.focus;
 
-  // ACTIVE
-  ActivityLevel activityLevel = ActivityLevel.moderate;
+  FocusActivity focusActivity = FocusActivity.general;
 
-  Duration inactivityWarning = const Duration(minutes: 2);
+// ACTIVE
+ActivityLevel activityLevel = ActivityLevel.moderate;
 
-  Duration briefExitAllowance = const Duration(seconds: 30);
+Duration inactivityWarning = const Duration(minutes: 2);
+Duration briefExitAllowance = const Duration(seconds: 30);
 
-  // WORKOUT
-  WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
-
+// WORKOUT
+WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
   WorkoutExercise selectedExercise = WorkoutExercise.pushUps;
 
   int workoutRepGoal = 20;
@@ -903,37 +1672,102 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // FOCUS SETUP
   // ===========================================================
 
-  Widget _buildFocusSetup() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _SectionTitle('Verification Rules'),
+Widget _buildFocusSetup() {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _SectionTitle('Verification Rules'),
 
-        const SizedBox(height: 10),
+      const SizedBox(height: 10),
 
-        _buildVerificationRules(),
+      _buildVerificationRules(),
 
-        const SizedBox(height: 18),
+      const SizedBox(height: 18),
 
-        const _SectionTitle('Reference Setup'),
+      const _SectionTitle('Expected Activity'),
 
-        const SizedBox(height: 4),
+      const SizedBox(height: 8),
 
-        Text(
-          _referenceDescription,
-          style: TextStyle(
-            color: widget.isDarkMode ? _T.muted : const Color(0xFF555861),
-            fontSize: 13,
-          ),
+      _buildFocusExpectedActivity(),
+
+      const SizedBox(height: 18),
+
+      const _SectionTitle('Reference Setup'),
+
+      const SizedBox(height: 4),
+
+      Text(
+        _referenceDescription,
+        style: TextStyle(
+          color: widget.isDarkMode
+              ? _T.muted
+              : const Color(0xFF555861),
+          fontSize: 13,
+          height: 1.35,
         ),
+      ),
 
-        const SizedBox(height: 10),
+      const SizedBox(height: 10),
 
-        _buildReferenceSetup(),
-      ],
+      _buildReferenceSetup(),
+    ],
+  );
+}
+
+  Widget _buildFocusExpectedActivity() {
+    return _ModeSettingRow(
+      icon: Icons.center_focus_strong_rounded,
+      title: 'Focus behavior',
+      subtitle: _focusActivityDescription,
+      trailing: DropdownButton<FocusActivity>(
+        value: focusActivity,
+        underline: const SizedBox.shrink(),
+        items: const [
+          DropdownMenuItem(
+            value: FocusActivity.general,
+            child: Text('General'),
+          ),
+          DropdownMenuItem(
+            value: FocusActivity.reading,
+            child: Text('Reading'),
+          ),
+          DropdownMenuItem(
+            value: FocusActivity.writingNotes,
+            child: Text('Writing / Notes'),
+          ),
+          DropdownMenuItem(
+            value: FocusActivity.computerWork,
+            child: Text('Computer Work'),
+          ),
+        ],
+        onChanged: (value) {
+          if (value == null) {
+            return;
+          }
+
+          setState(() {
+            focusActivity = value;
+          });
+        },
+      ),
     );
   }
 
+  String get _focusActivityDescription {
+    return switch (focusActivity) {
+      FocusActivity.general =>
+        'Balanced attention checks with normal movement allowed.',
+
+      FocusActivity.reading =>
+        'Allows normal page turns and looking down at reading material.',
+
+      FocusActivity.writingNotes =>
+        'Allows sustained hand movement and looking down while writing.',
+
+      FocusActivity.computerWork =>
+        'Allows keyboard/mouse movement while watching for disengagement.',
+    };
+  }
   // ===========================================================
   // ACTIVE SETUP
   // ===========================================================
@@ -2750,39 +3584,123 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // ===========================================================
 
   Widget _buildSensitivity() {
+    const sensitivityRed = Color(0xFFFF111C);
+    const sensitivityOrange = Color(0xFFFF8A00);
+
     return ValueListenableBuilder<double>(
       valueListenable: _sensitivityValue,
       builder: (context, value, child) {
+        final thumbColor =
+            Color.lerp(
+              sensitivityRed,
+              sensitivityOrange,
+              value,
+            ) ??
+            sensitivityRed;
+
         return Column(
           children: [
-            Slider(
-              value: value,
-              min: 0,
-              max: 1,
-              activeColor: _C.red,
-              onChanged: (nextValue) {
-                sensitivity = nextValue;
-                _sensitivityValue.value = nextValue;
-              },
+            SizedBox(
+              height: 48,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned(
+                    left: 24,
+                    right: 24,
+                    child: Container(
+                      height: 5,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            sensitivityRed,
+                            sensitivityOrange,
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: widget.isDarkMode
+                                ? Colors.black.withValues(alpha: .24)
+                                : Colors.black.withValues(alpha: .08),
+                            blurRadius: 5,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 5,
+
+                      // The actual Flutter track is transparent.
+                      // Our gradient underneath becomes the visible track.
+                      activeTrackColor: Colors.transparent,
+                      inactiveTrackColor: Colors.transparent,
+
+                      thumbColor: thumbColor,
+
+                      overlayColor: thumbColor.withValues(
+                        alpha: .14,
+                      ),
+
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 9,
+                      ),
+
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 18,
+                      ),
+                    ),
+                    child: Slider(
+                      value: value,
+                      min: 0,
+                      max: 1,
+                      onChanged: (nextValue) {
+                        sensitivity = nextValue;
+                        _sensitivityValue.value = nextValue;
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
+
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 3),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Low', style: TextStyle(fontSize: 12)),
-                  Text('Medium', style: TextStyle(fontSize: 12)),
-                  Text('High', style: TextStyle(fontSize: 12)),
+                  Text(
+                    'Low',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  Text(
+                    'Medium',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  Text(
+                    'High',
+                    style: TextStyle(fontSize: 12),
+                  ),
                 ],
               ),
             ),
+
             const SizedBox(height: 6),
+
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 _sensitivityDescription,
                 style: TextStyle(
-                  color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
+                  color: widget.isDarkMode
+                      ? _T.muted
+                      : const Color(0xFF676A74),
                   fontSize: 12,
                   height: 1.35,
                 ),
@@ -2820,15 +3738,16 @@ class _NewTaskPageState extends State<NewTaskPage> {
   }
 
     // Focus mode
-    if (sensitivity < .34) {
-      return 'Low: only obvious or sustained loss of attention triggers a warning.';
-    }
+   // Focus mode
+  if (sensitivity < .34) {
+    return 'Low: larger focus area, more movement tolerance, and a longer grace period.';
+  }
 
-    if (sensitivity < .67) {
-      return 'Medium: allows natural movement and fidgeting, but catches sustained looking away or leaving your focus area.';
-    }
+  if (sensitivity < .67) {
+    return 'Medium: balanced area, attention, and sustained behavior-change detection.';
+  }
 
-    return 'High: reacts quickly to attention changes while still allowing normal body movement.';
+  return 'High: tighter focus area and faster attention/behavior checks while still allowing normal task movement.';
   }
   // ===========================================================
   // PRO DIALOG
@@ -2933,6 +3852,10 @@ class _NewTaskPageState extends State<NewTaskPage> {
       alarm: selectedAlarm,
 
       sensitivity: sensitivity,
+
+      focusActivity: selectedMode == TaskMode.focus
+          ? focusActivity
+          : FocusActivity.general,
 
       poseReference: selectedMode == TaskMode.focus ? referencePose : null,
 
@@ -3050,9 +3973,14 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
 
   List<Face> _cachedFaces = const [];
 
-  PoseReference? _currentPose;
 
-  final ValueNotifier<bool> _positionDetected = ValueNotifier(false);
+  PoseReference? _adaptiveReference;
+
+  final List<PoseReference> _recentCalibrationSamples =
+      <PoseReference>[];
+
+  final ValueNotifier<bool> _positionDetected =
+      ValueNotifier(false);
 
   String _status = 'Preparing camera...';
 
@@ -3397,16 +4325,43 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
   }
 
   void _setCurrentPose(PoseReference? snapshot) {
-    _currentPose = snapshot;
-    _status = snapshot == null
-        ? 'Make sure enough of your body is visible to detect your position.'
-        : 'Position detected. Hold your normal position and capture.';
 
-    final detected = snapshot != null;
-    if (_positionDetected.value != detected) {
-      _positionDetected.value = detected;
+  if (snapshot == null) {
+    _recentCalibrationSamples.clear();
+    _adaptiveReference = null;
+
+    _status =
+        'Make sure enough of your body is visible to learn your focus position.';
+
+    if (_positionDetected.value) {
+      _positionDetected.value = false;
     }
+
+    return;
   }
+
+  _recentCalibrationSamples.add(snapshot);
+
+  // Keep a small rolling window only.
+  if (_recentCalibrationSamples.length > 8) {
+    _recentCalibrationSamples.removeAt(0);
+  }
+
+  _adaptiveReference =
+      TaskPoseAnalyzer.buildAdaptiveReference(
+    _recentCalibrationSamples,
+  );
+
+  final detected = _adaptiveReference != null;
+
+  _status = detected
+      ? 'Focus area learned. Ready to capture.'
+      : 'Hold your normal working position for a moment...';
+
+  if (_positionDetected.value != detected) {
+    _positionDetected.value = detected;
+  }
+}
 
   // ===========================================================
   // BUILD
@@ -3546,13 +4501,14 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
                         height: 54,
                         child: ElevatedButton(
                           onPressed: !positionDetected
-                              ? null
-                              : () {
-                                  final pose = _currentPose;
-                                  if (pose != null) {
-                                    Navigator.pop(context, pose);
-                                  }
-                                },
+                                ? null
+                                : () {
+                                    final reference = _adaptiveReference;
+
+                                    if (reference != null) {
+                                      Navigator.pop(context, reference);
+                                    }
+                                  },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _C.red,
                             foregroundColor: Colors.white,

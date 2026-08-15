@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -1320,7 +1319,7 @@ void _selectTaskTab(int index) {
         }
 
         if (task.stayInPosition) {
-          return 'Stay in Position';
+          return 'Stay in Focus Area';
         }
 
         if (task.objectInFrame) {
@@ -1664,6 +1663,17 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   PoseReference? _latestPose;
 
+  PoseReference? _previousFocusPose;
+
+  final List<PoseReference> _liveCalibrationSamples =
+      <PoseReference>[];
+
+  bool _liveCalibrationReady = false;
+
+  double _handMotionEma = 0.0;
+
+  DateTime? _fidgetStartedAt;
+
   DateTime? _violationStartedAt;
 
   DateTime? _recoveryStartedAt;
@@ -1684,7 +1694,8 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   DateTime _lastAlarm = DateTime.fromMillisecondsSinceEpoch(0);
 
-  static const Duration _faceAnalysisInterval = Duration(milliseconds: 250);
+  static const Duration _faceAnalysisInterval =
+      Duration(milliseconds: 450);
 
   // Same safety grace used by Active verification.
   // Focus verification should react much faster than Active mode.
@@ -1712,8 +1723,9 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
     _remainingTime = ValueNotifier<Duration>(remainingLiveTime(widget.task));
 
     _thresholds = VerificationThresholds.fromSensitivity(
-      widget.task.sensitivity,
-    );
+    widget.task.sensitivity,
+    widget.task.focusActivity,
+  );
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       _sessionTick();
@@ -1997,15 +2009,33 @@ Future<void> _initializeCamera() async {
 }
 
   Future<void> _disposeCamera() async {
-  _objectRecognition.resetTemporalState();
+    _objectRecognition.resetTemporalState();
 
-  for (final object in _requiredObjects) {
-    object.lastMatchedAt = null;
-  }
+    _resetFidgetTracking();
 
-  _objectMonitoringStartedAt = null;
+    _latestPose = null;
+    _latestFaces = const [];
 
-  final controller = _controller;
+    _lastAnalysis =
+        DateTime.fromMillisecondsSinceEpoch(0);
+
+    _lastFaceAnalysis =
+        DateTime.fromMillisecondsSinceEpoch(0);
+
+    // If calibration wasn't completed yet,
+    // discard incomplete calibration samples.
+    if (widget.task.poseReference == null) {
+      _liveCalibrationSamples.clear();
+      _liveCalibrationReady = false;
+    }
+
+    for (final object in _requiredObjects) {
+      object.lastMatchedAt = null;
+    }
+
+    _objectMonitoringStartedAt = null;
+
+    final controller = _controller;
 
     _controller = null;
 
@@ -2040,7 +2070,7 @@ Future<void> _initializeCamera() async {
   final poseDue =
       widget.task.stayInPosition &&
       now.difference(_lastAnalysis) >=
-          const Duration(milliseconds: 150);
+          const Duration(milliseconds: 180);
 
   final objectDue =
       widget.task.objectInFrame &&
@@ -2096,19 +2126,28 @@ Future<void> _initializeCamera() async {
           frame.inputImage,
         );
 
-        var faces = _latestFaces;
+      var faces = _latestFaces;
 
-        if (widget.task.poseReference == null ||
-            now.difference(_lastFaceAnalysis) >=
-                _faceAnalysisInterval) {
-          _lastFaceAnalysis = now;
+      final reference = widget.task.poseReference;
 
-          faces = await faceDetector.processImage(
-            frame.inputImage,
-          );
+      final shouldTrackFace =
+          reference == null ||
+          reference.faceTrackingEnabled;
 
-          _latestFaces = faces;
-        }
+      if (shouldTrackFace &&
+          now.difference(_lastFaceAnalysis) >=
+              _faceAnalysisInterval) {
+        _lastFaceAnalysis = now;
+
+        faces = await faceDetector.processImage(
+          frame.inputImage,
+        );
+
+        _latestFaces = faces;
+      } else if (!shouldTrackFace) {
+        faces = const [];
+        _latestFaces = const [];
+      }
 
         current = TaskPoseAnalyzer.createSnapshot(
           poses: poses,
@@ -2200,15 +2239,47 @@ Future<void> _initializeCamera() async {
 
     if (widget.task.stayInPosition &&
         widget.task.poseReference == null) {
-      final hasCalibrationPose = current != null;
+      if (current == null) {
+        _liveCalibrationSamples.clear();
+        _liveCalibrationReady = false;
 
-      final nextStatus = hasCalibrationPose
-          ? 'Position detected. Ready to calibrate.'
-          : 'Move into view so TaskProof can detect your position.';
+        const nextStatus =
+            'Move into view so TaskProof can learn your focus position.';
 
-      if (_status != nextStatus) {
+        if (_status != nextStatus) {
+          setState(() {
+            _status = nextStatus;
+          });
+        }
+
+        return;
+      }
+
+      _liveCalibrationSamples.add(current);
+
+      // Roughly 1.4 seconds at the current ~180ms pose interval.
+      if (_liveCalibrationSamples.length > 8) {
+        _liveCalibrationSamples.removeAt(0);
+      }
+
+      final adaptiveReference =
+          TaskPoseAnalyzer.buildAdaptiveReference(
+        _liveCalibrationSamples,
+      );
+
+      final ready = adaptiveReference != null;
+
+      if (_liveCalibrationReady != ready ||
+          _status !=
+              (ready
+                  ? 'Focus area learned. Ready to start.'
+                  : 'Learning your normal position...')) {
         setState(() {
-          _status = nextStatus;
+          _liveCalibrationReady = ready;
+
+          _status = ready
+              ? 'Focus area learned. Ready to start.'
+              : 'Learning your normal position...';
         });
       }
 
@@ -2229,136 +2300,180 @@ Future<void> _initializeCamera() async {
   // ===========================================================
   // EVALUATE POSITION
   // ===========================================================
-
   void _evaluatePosition(PoseReference? current) {
-  final reference = widget.task.poseReference;
+    final reference = widget.task.poseReference;
 
-  String? violation;
+    String? violation;
 
-  if (widget.task.stayInPosition) {
-    if (reference == null) {
-      return;
-    }
-
-    // =========================================================
-    // PERSON / POSITION MISSING
-    // =========================================================
-
-    if (current == null) {
-      violation = 'Your reference position is no longer clearly visible.';
-    } else {
-      final thresholds = _thresholds;
-
-      // =======================================================
-      // FIND LANDMARKS THAT EXIST IN BOTH FRAMES
-      // =======================================================
-
-      final commonLandmarks = <PoseLandmarkType>[];
-
-      for (final type in reference.landmarks.keys) {
-        if (current.landmarks.containsKey(type)) {
-          commonLandmarks.add(type);
-        }
+    if (widget.task.stayInPosition) {
+      if (reference == null) {
+        return;
       }
 
-      // We do not require any particular body part.
-      // We only need enough matching points to compare positions.
-      if (commonLandmarks.length < 3) {
-        violation = 'Not enough of your reference position is visible.';
+      if (current == null) {
+        _resetFidgetTracking();
+
+        violation =
+            'Your focus area is no longer clearly visible.';
       } else {
-       
+        final thresholds = _thresholds;
 
-        // =====================================================
-        // OVERALL POSITION
-        // =====================================================
+        final metrics =
+            TaskPoseAnalyzer.compareToReference(
+              reference: reference,
+              current: current,
+            );
 
-        final centerDx = current.centerX - reference.centerX;
+        final distractingFidget =
+            _updateFidgetTracking(
+              reference,
+              current,
+            );
 
-        final centerDy = current.centerY - reference.centerY;
+        if (!metrics.hasEnoughCoverage) {
+          violation =
+              'Not enough of your focus position is visible.';
+        } else {
+          double? yawDifference;
+          double? pitchDifference;
 
-        final centerMovement = math.sqrt(
-          (centerDx * centerDx) + (centerDy * centerDy),
-        );
+          if (current.headYaw != null &&
+              reference.headYaw != null) {
+            yawDifference =
+                TaskPoseAnalyzer.angleDifference(
+                  current.headYaw!,
+                  reference.headYaw!,
+                );
+          }
 
-        // =====================================================
-        // PERSON SIZE / DISTANCE
-        // =====================================================
+          if (current.headPitch != null &&
+              reference.headPitch != null) {
+            pitchDifference =
+                TaskPoseAnalyzer.angleDifference(
+                  current.headPitch!,
+                  reference.headPitch!,
+                );
+          }
 
-        final scaleDifference = reference.poseScale <= 0.001
-            ? 0.0
-            : ((current.poseScale - reference.poseScale).abs() /
-                  reference.poseScale);
+          // Face was reliably visible during calibration,
+          // so losing it now contributes to distraction.
+          if (reference.faceTrackingEnabled &&
+              !current.faceDetected) {
+            violation =
+                'Look back toward your focus area.';
+          }
 
-        // =====================================================
-        // OPTIONAL FACE DIRECTION
-        // =====================================================
+          // Sustained looking away.
+          else if ((yawDifference != null &&
+                  yawDifference > thresholds.headYaw) ||
+              (pitchDifference != null &&
+                  pitchDifference >
+                      thresholds.headPitch)) {
+            violation =
+                'Look back toward your focus area.';
+          }
 
-        double? yawDifference;
-        double? pitchDifference;
-        // ignore: unused_local_variable
-        double? rollDifference;
+          // Left the general study/work area.
+          else if (metrics.centerMovement >
+                  thresholds.bodyPosition ||
+              metrics.scaleDifference >
+                  thresholds.bodyScale) {
+            violation =
+                'Return to your focus area.';
+          }
 
-        if (current.headYaw != null && reference.headYaw != null) {
-          yawDifference = TaskPoseAnalyzer.angleDifference(
-            current.headYaw!,
-            reference.headYaw!,
-          );
-        }
+          // Large body orientation change:
+          // sitting -> laying/reclining, etc.
+          else if (metrics.bodyAxisDifference != null &&
+              metrics.bodyAxisDifference! >
+                  thresholds.bodyAxisChange) {
+            violation =
+                'Return to your normal working position.';
+          }
 
-        if (current.headPitch != null && reference.headPitch != null) {
-          pitchDifference = TaskPoseAnalyzer.angleDifference(
-            current.headPitch!,
-            reference.headPitch!,
-          );
-        }
+          // Large structural change without demanding
+          // exact Workout-style form.
+          else if (metrics.structuralDeviation != null &&
+              metrics.structuralDeviation! >
+                  thresholds.majorPoseChange) {
+            violation =
+                'Your focus posture changed too much.';
+          }
 
-        if (current.headRoll != null && reference.headRoll != null) {
-          rollDifference = TaskPoseAnalyzer.angleDifference(
-            current.headRoll!,
-            reference.headRoll!,
-          );
-        }
-
-        // =====================================================
-        // LOOKING AWAY / ATTENTION CHANGE
-        // =====================================================
-
-        if ((yawDifference != null && yawDifference > thresholds.headYaw) ||
-            (pitchDifference != null &&
-                pitchDifference > thresholds.headPitch)) {
-          violation = 'Look back toward your focus area.';
-        }
-
-        // =====================================================
-        // LEFT DESIGNATED FOCUS AREA
-        // =====================================================
-
-        else if (centerMovement > thresholds.bodyPosition ||
-            scaleDifference > thresholds.bodyScale) {
-          violation = 'Return to your focus area.';
+          // Long repetitive wrist movement.
+          else if (distractingFidget) {
+            violation =
+                'Settle your hands and return to your task.';
+          }
         }
       }
     }
-  }
 
-  // =========================================================
-  // REQUIRED OBJECT
-  // =========================================================
+    if (violation == null &&
+        widget.task.objectInFrame) {
+      violation = _objectViolation(
+        DateTime.now(),
+      );
+    }
 
-  // Position must pass AND the required object must pass.
-  if (violation == null && widget.task.objectInFrame) {
-    violation = _objectViolation(DateTime.now());
-  }
-
-  // =========================================================
-  // APPLY RESULT
-  // =========================================================
     if (violation == null) {
       _handleGoodPosition();
     } else {
       _handleViolation(violation);
     }
   }
+
+  bool _updateFidgetTracking(
+  PoseReference reference,
+  PoseReference current,
+) {
+  final activity = widget.task.focusActivity;
+
+  final handMotion =
+      TaskPoseAnalyzer.handMotion(
+        reference: reference,
+        current: current,
+        previous: _previousFocusPose,
+      );
+
+  _previousFocusPose = current;
+
+  // Very cheap smoothing.
+  _handMotionEma =
+      (_handMotionEma * 0.78) +
+      (handMotion * 0.22);
+
+  // Do NOT try to distinguish pencil fidgeting from
+  // actual writing/typing. The camera cannot do that
+  // reliably enough.
+  if (activity == FocusActivity.writingNotes ||
+      activity == FocusActivity.computerWork ||
+      handMotion == 0.0) {
+    _fidgetStartedAt = null;
+    return false;
+  }
+
+  if (_handMotionEma <=
+      _thresholds.fidgetMotion) {
+    _fidgetStartedAt = null;
+    return false;
+  }
+
+  final now = DateTime.now();
+
+  _fidgetStartedAt ??= now;
+
+  return now
+          .difference(_fidgetStartedAt!)
+          .inMilliseconds >=
+      _thresholds.fidgetMilliseconds;
+}
+
+void _resetFidgetTracking() {
+  _previousFocusPose = null;
+  _handMotionEma = 0.0;
+  _fidgetStartedAt = null;
+}
 
   String? _objectViolation(DateTime now) {
   if (!widget.task.objectInFrame) {
@@ -2598,31 +2713,44 @@ Future<void> _initializeCamera() async {
   // CALIBRATE
   // ===========================================================
 
-  void _calibrateAndStart() {
-    final pose = _latestPose;
+void _calibrateAndStart() {
+  final reference =
+      TaskPoseAnalyzer.buildAdaptiveReference(
+    _liveCalibrationSamples,
+  );
 
-    if (pose == null) {
-      return;
-    }
-
-    setState(() {
-      widget.task.poseReference = pose;
-
-      widget.task.startedAt = DateTime.now();
-
-      _objectMonitoringStartedAt ??= DateTime.now();
-
-      _remainingTime.value = widget.task.duration;
-
-      _warningActive = false;
-
-      _warningReason = null;
-
-      _status = 'Actively verifying';
-
-      _hasBeenMonitoring = true;
-    });
+  if (reference == null) {
+    return;
   }
+
+  _resetFidgetTracking();
+
+  setState(() {
+    widget.task.poseReference = reference;
+
+    widget.task.startedAt = DateTime.now();
+
+    _objectMonitoringStartedAt ??= DateTime.now();
+
+    _remainingTime.value = widget.task.duration;
+
+    _warningActive = false;
+
+    _warningReason = null;
+
+    _violationStartedAt = null;
+
+    _recoveryStartedAt = null;
+
+    _status = 'Actively verifying';
+
+    _hasBeenMonitoring = true;
+
+    _liveCalibrationReady = false;
+  });
+
+  _liveCalibrationSamples.clear();
+}
 
   // ===========================================================
   // SESSION TIMER
@@ -2650,10 +2778,6 @@ Future<void> _initializeCamera() async {
       return;
     }
 
-    if (widget.task.objectInFrame &&
-        _objectProfilesReady) {
-      _evaluatePosition(_latestPose);
-    }
 
     // Also keep repeating warning if the pose detector
     // is currently in warning state.
@@ -2800,9 +2924,8 @@ Future<void> _initializeCamera() async {
     }
 
     if (_warningActive && !_isRechecking) {
-      return 'Out of position';
-    }
-
+    return 'Focus interrupted';
+  }
     return 'Actively Verifying';
   }
 
@@ -2983,8 +3106,8 @@ Future<void> _initializeCamera() async {
                                     size: 45,
                                   ),
                                   const SizedBox(height: 9),
-                                  const Text(
-                                    'Return to Position',
+                                    const Text(
+                                    'Focus Interrupted',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       color: Colors.white,
@@ -2995,7 +3118,7 @@ Future<void> _initializeCamera() async {
                                   const SizedBox(height: 6),
                                   Text(
                                     _warningReason ??
-                                        'Return to your reference position.',
+                                        'Return your attention to your task',
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(
                                       color: Color(0xFFE3E5E8),
@@ -3034,9 +3157,9 @@ Future<void> _initializeCamera() async {
                         width: double.infinity,
                         height: 54,
                         child: ElevatedButton(
-                          onPressed: _latestPose == null
+                        onPressed: !_liveCalibrationReady
                               ? null
-                              : _calibrateAndStart,
+                          : _calibrateAndStart,
                           style: ElevatedButton.styleFrom(
                             elevation: 0,
                             backgroundColor: _C.red,
@@ -3199,30 +3322,7 @@ Future<void> _initializeCamera() async {
   // ===========================================================
 
   Widget _liveCameraBody() {
-    if (!widget.task.stayInPosition) {
-      return const ColoredBox(
-        color: Color(0xFF11151A),
-        child: Center(
-          child: Padding(
-            padding: EdgeInsets.all(30),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.inventory_2_outlined, color: Colors.white, size: 60),
-
-                SizedBox(height: 16),
-
-                Text(
-                  'Object verification will be implemented separately.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white, fontSize: 16),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+    
 
     if (_cameraInitializing) {
       return const ColoredBox(
@@ -3278,53 +3378,149 @@ class VerificationThresholds {
     required this.headYaw,
     required this.headPitch,
     required this.headRoll,
+    required this.majorPoseChange,
+    required this.bodyAxisChange,
+    required this.fidgetMotion,
+    required this.fidgetMilliseconds,
     required this.graceMilliseconds,
   });
 
   final double bodyPosition;
-
   final double bodyScale;
 
   final double headYaw;
-
   final double headPitch;
-
   final double headRoll;
+
+  final double majorPoseChange;
+  final double bodyAxisChange;
+
+  final double fidgetMotion;
+  final int fidgetMilliseconds;
 
   final int graceMilliseconds;
 
-  static VerificationThresholds fromSensitivity(double sensitivity) {
+  static VerificationThresholds fromSensitivity(
+    double sensitivity,
+    FocusActivity activity,
+  ) {
     final t = sensitivity.clamp(0.0, 1.0);
 
-    // Low sensitivity = forgiving.
-    // High sensitivity = strict.
+    var yawLow = 44.0;
+    var yawHigh = 20.0;
 
-  return VerificationThresholds(
-    // Keep the user inside roughly the same focus area,
-    // but allow normal sitting movement and fidgeting.
-    bodyPosition: .18,
-    bodyScale: .45,
+    var pitchLow = 36.0;
+    var pitchHigh = 18.0;
 
-    // Sensitivity now controls how easily TaskProof
-    // considers the user to be looking away.
-    headYaw: _lerp(44, 18, t),
-    headPitch: _lerp(34, 14, t),
+    var poseLow = 0.80;
+    var poseHigh = 0.56;
 
-    // Head tilt by itself is not a distraction.
-    headRoll: 180,
+    var axisLow = 52.0;
+    var axisHigh = 32.0;
 
-    // Low sensitivity: about 1.5 seconds.
-    // Medium: about 1.1 seconds.
-    // High: about 0.65 seconds.
-    graceMilliseconds: _lerp(1500, 650, t).round(),
-    );
+    var fidgetLow = 0.24;
+    var fidgetHigh = 0.15;
+
+    var fidgetMsLow = 6500.0;
+    var fidgetMsHigh = 4000.0;
+
+    switch (activity) {
+      case FocusActivity.general:
+        break;
+
+      case FocusActivity.reading:
+        // Looking downward/page movement is normal.
+        pitchLow = 54;
+        pitchHigh = 32;
+
+        poseLow = 0.86;
+        poseHigh = 0.62;
+
+        fidgetLow = 0.27;
+        fidgetHigh = 0.18;
+
+        fidgetMsLow = 7000;
+        fidgetMsHigh = 4500;
+
+        break;
+
+      case FocusActivity.writingNotes:
+        // Hand motion/downward head angle expected.
+        yawLow = 48;
+        yawHigh = 24;
+
+        pitchLow = 58;
+        pitchHigh = 36;
+
+        poseLow = 0.92;
+        poseHigh = 0.68;
+
+        axisLow = 58;
+        axisHigh = 38;
+
+        break;
+
+      case FocusActivity.computerWork:
+        yawLow = 40;
+        yawHigh = 18;
+
+        pitchLow = 34;
+        pitchHigh = 16;
+
+        poseLow = 0.86;
+        poseHigh = 0.60;
+
+        break;
     }
 
-    static double _lerp(double start, double end, double t) {
+    return VerificationThresholds(
+      bodyPosition:
+          _lerp(0.20, 0.13, t),
+
+      bodyScale:
+          _lerp(0.50, 0.36, t),
+
+      headYaw:
+          _lerp(yawLow, yawHigh, t),
+
+      headPitch:
+          _lerp(pitchLow, pitchHigh, t),
+
+      headRoll: 180,
+
+      majorPoseChange:
+          _lerp(poseLow, poseHigh, t),
+
+      bodyAxisChange:
+          _lerp(axisLow, axisHigh, t),
+
+      fidgetMotion:
+          _lerp(fidgetLow, fidgetHigh, t),
+
+      fidgetMilliseconds:
+          _lerp(
+            fidgetMsLow,
+            fidgetMsHigh,
+            t,
+          ).round(),
+
+      graceMilliseconds:
+          _lerp(
+            1500,
+            650,
+            t,
+          ).round(),
+    );
+  }
+
+  static double _lerp(
+    double start,
+    double end,
+    double t,
+  ) {
     return start + ((end - start) * t);
   }
 }
-
 // =============================================================
 // LIVE CAMERA PAINTER
 // =============================================================
