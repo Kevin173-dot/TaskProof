@@ -13,8 +13,12 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart'
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart'
     hide InputImage, InputImageMetadata, InputImageFormat, InputImageRotation;
 
+import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart'
+    show DetectionMode, ObjectDetector, ObjectDetectorOptions;
+
 import 'active_verification_page.dart';
 import 'new_task_page.dart';
+import 'object_recognition_service.dart';
 import 'workout_pose_analyzer.dart';
 import 'workout_verification_page.dart';
 
@@ -33,6 +37,8 @@ class _MainPageState extends State<MainPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   final List<TaskData> tasks = [];
+
+  late final PageController _taskPageController;
 
   int selectedTab = 0;
 
@@ -53,24 +59,28 @@ class _MainPageState extends State<MainPage> {
   // ===========================================================
 
   @override
-  void initState() {
-    super.initState();
+void initState() {
+  super.initState();
 
-    _clock = ValueNotifier<DateTime>(DateTime.now());
+  _taskPageController = PageController(initialPage: selectedTab);
 
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      _updateTimers();
-    });
-  }
+  _clock = ValueNotifier<DateTime>(DateTime.now());
+
+  _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+    _updateTimers();
+  });
+}
 
   @override
-  void dispose() {
-    _ticker?.cancel();
+void dispose() {
+  _ticker?.cancel();
 
-    _clock.dispose();
+  _clock.dispose();
 
-    super.dispose();
-  }
+  _taskPageController.dispose();
+
+  super.dispose();
+}
 
   // ===========================================================
   // TIMER
@@ -204,16 +214,16 @@ class _MainPageState extends State<MainPage> {
                     canvasColor: const Color(0xFF10161D),
                     cardColor: const Color(0xFF10161D),
                     dividerColor: const Color(0xFF252D37),
-                    colorScheme: const ColorScheme.dark(
+                    colorScheme: ColorScheme.dark(
                       primary: _C.red,
-                      surface: Color(0xFF10161D),
+                      surface: const Color(0xFF10161D),
                     ),
                   )
                 : ThemeData.light(),
             child: Scaffold(
               key: _scaffoldKey,
               backgroundColor: pageBackground,
-              drawer: const _AppDrawer(),
+              drawer: _AppDrawer(),
               body: SafeArea(
                 bottom: false,
                 child: Column(
@@ -300,7 +310,7 @@ class _MainPageState extends State<MainPage> {
                         child: Container(
                           width: 9,
                           height: 9,
-                          decoration: const BoxDecoration(
+                          decoration: BoxDecoration(
                             color: _C.red,
                             shape: BoxShape.circle,
                           ),
@@ -360,9 +370,26 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
+
+void _selectTaskTab(int index) {
+  setState(() {
+    selectedTab = index;
+    showCreateMenu = false;
+  });
+
+  if (_taskPageController.hasClients) {
+    _taskPageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+}
   // ===========================================================
   // TABS
   // ===========================================================
+
+
 
   Widget _buildTabs() {
     const labels = ['All', 'Scheduled', 'Completed'];
@@ -384,11 +411,7 @@ class _MainPageState extends State<MainPage> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () {
-                setState(() {
-                  selectedTab = index;
-
-                  showCreateMenu = false;
-                });
+                _selectTaskTab(index);
               },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 170),
@@ -426,16 +449,37 @@ class _MainPageState extends State<MainPage> {
   // ===========================================================
 
   Widget _buildTaskArea() {
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: tasks.isEmpty ? _buildEmptyContent() : _buildTasksContent(),
-        ),
+  return Stack(
+    children: [
+      Positioned.fill(
+        child: PageView.builder(
+          controller: _taskPageController,
+          itemCount: 3,
+          physics: const BouncingScrollPhysics(),
+          onPageChanged: (index) {
+            if (selectedTab == index) {
+              return;
+            }
 
-        Positioned(bottom: 20, right: 24, child: _buildCreateButton()),
-      ],
-    );
-  }
+            setState(() {
+              selectedTab = index;
+              showCreateMenu = false;
+            });
+          },
+          itemBuilder: (context, index) {
+          if (index == 0 && tasks.isEmpty) {
+            return _buildEmptyContent();
+          }
+
+          return _buildTasksContent(index);
+        },
+        ),
+      ),
+
+      Positioned(bottom: 20, right: 24, child: _buildCreateButton()),
+    ],
+  );
+}
 
   // ===========================================================
   // EMPTY STATE
@@ -460,11 +504,13 @@ class _MainPageState extends State<MainPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Image.asset(
-                    'assets/images/clipboard.png',
-                    width: 230,
-                    fit: BoxFit.contain,
-                    cacheWidth: decodedClipboardWidth,
-                    errorBuilder: (context, error, stackTrace) {
+                  isDarkMode
+                      ? 'assets/images/clipboard_dark.png'
+                      : 'assets/images/clipboard.png',
+                  width: 230,
+                  fit: BoxFit.contain,
+                  cacheWidth: decodedClipboardWidth,
+                  errorBuilder: (context, error, stackTrace) {
                       return const SizedBox(
                         width: 180,
                         height: 180,
@@ -516,8 +562,8 @@ class _MainPageState extends State<MainPage> {
   // TASK CONTENT
   // ===========================================================
 
-  Widget _buildTasksContent() {
-    if (selectedTab == 1) {
+  Widget _buildTasksContent(int tabIndex) {
+  if (tabIndex == 1) {
       final scheduled = tasks
           .where((task) => task.status == TaskStatus.scheduled)
           .toList();
@@ -533,7 +579,7 @@ class _MainPageState extends State<MainPage> {
       return _taskList(scheduled);
     }
 
-    if (selectedTab == 2) {
+     if (tabIndex == 2) {
       final completed = tasks
           .where((task) => task.status == TaskStatus.completed)
           .toList();
@@ -969,13 +1015,14 @@ class _MainPageState extends State<MainPage> {
 
     switch (task.mode) {
       case TaskMode.focus:
-        if (task.stayInPosition && !MlKitCameraImageConverter.supported) {
-          _message(
-            'Stay in Position verification must be tested on Android or iPhone, not Chrome.',
-          );
-          return;
-        }
-        break;
+      if ((task.stayInPosition || task.objectInFrame) &&
+          !MlKitCameraImageConverter.supported) {
+        _message(
+          'Focus camera verification must be tested on Android or iPhone, not Chrome.',
+        );
+        return;
+      }
+      break;
 
       case TaskMode.active:
         if (!MlKitCameraImageConverter.supported) {
@@ -1001,20 +1048,21 @@ class _MainPageState extends State<MainPage> {
         break;
     }
 
-    setState(() {
-      task.status = TaskStatus.live;
+        setState(() {
+        task.status = TaskStatus.live;
 
-      task.completedAt = null;
+        task.completedAt = null;
 
-      task.scheduleAlertShown = true;
+        task.scheduleAlertShown = true;
 
-      selectedTab = 0;
-
-      switch (task.mode) {
+        switch (task.mode) {
         case TaskMode.focus:
           // If a reference was already captured, begin immediately.
           // Otherwise Focus verification first asks for calibration.
-          task.startedAt = task.poseReference == null ? null : DateTime.now();
+          task.startedAt =
+          task.stayInPosition && task.poseReference == null
+              ? null
+              : DateTime.now();
           break;
 
         case TaskMode.active:
@@ -1027,14 +1075,16 @@ class _MainPageState extends State<MainPage> {
       }
     });
 
+    _selectTaskTab(0);
+
     await _openLiveSession(task);
-  }
+    }
 
-  // ===========================================================
-  // OPEN LIVE SESSION
-  // ===========================================================
+    // ===========================================================
+    // OPEN LIVE SESSION
+    // ===========================================================
 
-  Future<void> _openLiveSession(TaskData task) async {
+    Future<void> _openLiveSession(TaskData task) async {
     if (task.status != TaskStatus.live) {
       return;
     }
@@ -1218,18 +1268,18 @@ class _MainPageState extends State<MainPage> {
     }
 
     setState(() {
-      task.status = TaskStatus.scheduled;
+    task.status = TaskStatus.scheduled;
 
-      task.scheduledFor = scheduled;
+    task.scheduledFor = scheduled;
 
-      task.startedAt = null;
+    task.startedAt = null;
 
-      task.completedAt = null;
+    task.completedAt = null;
 
-      task.scheduleAlertShown = false;
+    task.scheduleAlertShown = false;
+  });
 
-      selectedTab = 1;
-    });
+  _selectTaskTab(1);
   }
 
   // ===========================================================
@@ -1334,45 +1384,63 @@ class _MainPageState extends State<MainPage> {
     }
 
     setState(() {
-      tasks.add(task);
-
-      selectedTab = task.status == TaskStatus.scheduled ? 1 : 0;
+    tasks.add(task);
     });
+
+    _selectTaskTab(
+      task.status == TaskStatus.scheduled ? 1 : 0,
+    );
   }
 
   // ===========================================================
   // CREATE FAB
   // ===========================================================
 
-  Widget _buildCreateButton() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        if (showCreateMenu) ...[_buildCreateMenu(), const SizedBox(height: 16)],
+Widget _buildCreateButton() {
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      if (showCreateMenu) ...[_buildCreateMenu(), const SizedBox(height: 16)],
 
-        SizedBox(
-          width: 84,
-          height: 84,
-          child: FloatingActionButton(
-            heroTag: 'taskCreateFab',
-            backgroundColor: _C.red,
-            foregroundColor: Colors.white,
-            onPressed: () {
-              setState(() {
-                showCreateMenu = !showCreateMenu;
-              });
-            },
-            child: AnimatedRotation(
-              turns: showCreateMenu ? .125 : 0,
-              duration: const Duration(milliseconds: 200),
-              child: const Icon(Icons.add_rounded, size: 40),
+      SizedBox(
+        width: 78,
+        height: 78,
+        child: FloatingActionButton(
+          heroTag: 'taskCreateFab',
+          elevation: 8,
+          backgroundColor: _C.red,
+          foregroundColor: Colors.white,
+          shape: const CircleBorder(),
+          onPressed: () {
+            setState(() {
+              showCreateMenu = !showCreateMenu;
+            });
+          },
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(
+              begin: 0,
+              end: showCreateMenu ? 1 : 0,
             ),
+            duration: const Duration(milliseconds: 300),
+            builder: (
+              context,
+              progress,
+              child,
+            ) {
+              return CustomPaint(
+                painter: _ApertureButtonPainter(
+                  progress: progress,
+                ),
+                size: const Size(32, 32),
+              );
+            },
           ),
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   Widget _buildCreateMenu() {
     return Container(
@@ -1560,6 +1628,14 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   FaceDetector? _faceDetector;
 
+  ObjectDetector? _objectLocator;
+
+  final ObjectRecognitionService _objectRecognition =
+      ObjectRecognitionService(
+        analysisInterval: const Duration(milliseconds: 450),
+        hitConfirmationFrames: 2,
+      );
+
   Timer? _timer;
 
   late final AnimationController _recheckFlashController;
@@ -1600,10 +1676,24 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   List<Face> _latestFaces = const [];
 
+  final List<_FocusRequiredObjectState> _requiredObjects = [];
+
+  bool _objectProfilesReady = false;
+
+  DateTime? _objectMonitoringStartedAt;
+
   DateTime _lastAlarm = DateTime.fromMillisecondsSinceEpoch(0);
 
-  static const Duration _faceAnalysisInterval = Duration(milliseconds: 450);
+  static const Duration _faceAnalysisInterval = Duration(milliseconds: 250);
 
+  // Same safety grace used by Active verification.
+  // Focus verification should react much faster than Active mode.
+    static const Duration _objectInitialGrace = Duration(milliseconds: 2500);
+    static const Duration _objectMissingGrace = Duration(milliseconds: 1000);
+
+    // Focus requires a stronger visual match so random background regions
+    // are less likely to be accepted as the saved object.
+    static const double _focusObjectMinimumConfidence = 0.82;
   // ===========================================================
   // INIT
   // ===========================================================
@@ -1629,17 +1719,12 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
       _sessionTick();
     });
 
-    if (widget.task.stayInPosition) {
-      _initializeMl();
-    } else {
-      widget.task.startedAt ??= DateTime.now();
-
-      _remainingTime.value = remainingLiveTime(widget.task);
-
-      _cameraInitializing = false;
-
-      _status = 'Object verification is not connected yet.';
-    }
+    if (widget.task.stayInPosition || widget.task.objectInFrame) {
+    _initializeMl();
+  } else {
+    _cameraInitializing = false;
+    _status = 'No verification rule selected.';
+  }
   }
 
   @override
@@ -1654,11 +1739,16 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
     _disposeCamera();
 
-    _poseDetector?.close();
+  _poseDetector?.close();
 
-    _faceDetector?.close();
+  _faceDetector?.close();
 
-    super.dispose();
+  _objectLocator?.close();
+
+  _objectRecognition.dispose();
+
+  super.dispose();
+
   }
 
   // ===========================================================
@@ -1667,7 +1757,7 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!widget.task.stayInPosition) {
+    if (!widget.task.stayInPosition && !widget.task.objectInFrame) {
       return;
     }
 
@@ -1700,21 +1790,25 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
   // INITIALIZE ML
   // ===========================================================
 
-  Future<void> _initializeMl() async {
-    if (!MlKitCameraImageConverter.supported) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _cameraInitializing = false;
-
-        _status = 'Stay in Position requires Android or iPhone.';
-      });
-
+Future<void> _initializeMl() async {
+  if (!MlKitCameraImageConverter.supported) {
+    if (!mounted) {
       return;
     }
 
+    setState(() {
+      _cameraInitializing = false;
+      _status = 'Focus verification requires Android or iPhone.';
+    });
+
+    return;
+  }
+
+  // =========================================================
+  // STAY IN POSITION
+  // =========================================================
+
+  if (widget.task.stayInPosition) {
     _poseDetector = PoseDetector(
       options: PoseDetectorOptions(
         model: PoseDetectionModel.base,
@@ -1728,93 +1822,190 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
         enableTracking: true,
       ),
     );
-
-    await _initializeCamera();
   }
 
+  // =========================================================
+  // REQUIRED OBJECTS
+  // =========================================================
+
+  if (widget.task.objectInFrame &&
+      widget.task.requiredObjectIds.isNotEmpty) {
+    _objectLocator = ObjectDetector(
+      options: ObjectDetectorOptions(
+        mode: DetectionMode.single,
+        classifyObjects: false,
+        multipleObjects: true,
+      ),
+    );
+  }
+
+  await _loadRequiredObjects();
+
+  if (!mounted) {
+    return;
+  }
+
+  await _initializeCamera();
+}
+
+Future<void> _loadRequiredObjects() async {
+  if (!widget.task.objectInFrame) {
+    _objectProfilesReady = true;
+    return;
+  }
+
+  final ids = widget.task.requiredObjectIds;
+
+  if (ids.isEmpty) {
+    _objectProfilesReady = true;
+    return;
+  }
+
+  try {
+    final result = await _objectRecognition.loadRequiredObjects(ids);
+
+    if (!mounted) {
+      return;
+    }
+
+    final objectsById = {
+      for (final object in result.objects) object.id: object,
+    };
+
+    _requiredObjects
+      ..clear()
+      ..addAll(
+        ids.map((id) {
+          final object = objectsById[id];
+
+          return _FocusRequiredObjectState(
+            id: id,
+            name: object?.name ?? 'Saved object unavailable',
+            available: object != null,
+          );
+        }),
+      );
+
+    _objectProfilesReady = true;
+  } catch (error) {
+    debugPrint('Focus object profile load error: $error');
+
+    _requiredObjects
+      ..clear()
+      ..addAll(
+        ids.map(
+          (id) => _FocusRequiredObjectState(
+            id: id,
+            name: 'Saved object unavailable',
+            available: false,
+          ),
+        ),
+      );
+
+    _objectProfilesReady = true;
+  }
+}
   // ===========================================================
   // CAMERA
   // ===========================================================
 
-  Future<void> _initializeCamera() async {
-    if (_startingCamera || _controller != null) {
+
+
+
+Future<void> _initializeCamera() async {
+  if (_startingCamera || _controller != null) {
+    return;
+  }
+
+  _startingCamera = true;
+
+  try {
+    final cameras = await availableCameras();
+
+    if (cameras.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _cameraInitializing = false;
+          _status = 'No camera available.';
+        });
+      }
+
       return;
     }
 
-    _startingCamera = true;
+    _camera = cameras.firstWhere(
+      (camera) => camera.lensDirection == CameraLensDirection.front,
+      orElse: () => cameras.first,
+    );
+
+    final controller = CameraController(
+      _camera!,
+      ResolutionPreset.medium,
+      enableAudio: false,
+      imageFormatGroup: MlKitCameraImageConverter.cameraFormat,
+    );
+
+    await controller.initialize();
 
     try {
-      final cameras = await availableCameras();
-
-      if (cameras.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _cameraInitializing = false;
-
-            _status = 'No camera available.';
-          });
-        }
-
-        return;
-      }
-
-      _camera = cameras.firstWhere(
-        (camera) => camera.lensDirection == CameraLensDirection.front,
-        orElse: () => cameras.first,
+      await controller.lockCaptureOrientation(
+        DeviceOrientation.portraitUp,
       );
+    } catch (_) {}
 
-      final controller = CameraController(
-        _camera!,
-        ResolutionPreset.medium,
-        enableAudio: false,
-        imageFormatGroup: MlKitCameraImageConverter.cameraFormat,
-      );
+    _controller = controller;
 
-      await controller.initialize();
+    _latestFaces = const [];
+    _lastFaceAnalysis = DateTime.fromMillisecondsSinceEpoch(0);
 
-      try {
-        await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
-      } catch (_) {}
+    await controller.startImageStream(_processFrame);
 
-      _controller = controller;
-
-      _latestFaces = const [];
-      _lastFaceAnalysis = DateTime.fromMillisecondsSinceEpoch(0);
-
-      await controller.startImageStream(_processFrame);
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _cameraInitializing = false;
-
-        if (widget.task.poseReference == null) {
-          _status = 'Get into your normal position, then calibrate.';
-        } else {
-          _status = 'Actively verifying';
-
-          _hasBeenMonitoring = true;
-        }
-      });
-    } on CameraException catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _cameraInitializing = false;
-
-        _status = 'Camera error: ${error.description ?? error.code}';
-      });
-    } finally {
-      _startingCamera = false;
+    if (!mounted) {
+      return;
     }
+
+    setState(() {
+      _cameraInitializing = false;
+
+      if (widget.task.stayInPosition &&
+          widget.task.poseReference == null) {
+        _status = 'Get into your normal position, then calibrate.';
+      } else {
+        widget.task.startedAt ??= DateTime.now();
+
+        _remainingTime.value = remainingLiveTime(widget.task);
+
+        _objectMonitoringStartedAt ??= DateTime.now();
+
+        _status = 'Actively verifying';
+
+        _hasBeenMonitoring = true;
+      }
+    });
+  } on CameraException catch (error) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _cameraInitializing = false;
+      _status = 'Camera error: ${error.description ?? error.code}';
+    });
+  } finally {
+    _startingCamera = false;
   }
+}
 
   Future<void> _disposeCamera() async {
-    final controller = _controller;
+  _objectRecognition.resetTemporalState();
+
+  for (final object in _requiredObjects) {
+    object.lastMatchedAt = null;
+  }
+
+  _objectMonitoringStartedAt = null;
+
+  final controller = _controller;
 
     _controller = null;
 
@@ -1838,110 +2029,216 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
   // ===========================================================
 
   Future<void> _processFrame(CameraImage image) async {
-    if (_processing ||
-        _controller == null ||
-        _camera == null ||
-        _poseDetector == null ||
-        _faceDetector == null) {
-      return;
-    }
+  if (_processing || _controller == null || _camera == null) {
+    return;
+  }
 
-    final now = DateTime.now();
+  final controller = _controller!;
+  final camera = _camera!;
+  final now = DateTime.now();
 
-    // Approximately 6-7 ML analyses each second.
-    if (now.difference(_lastAnalysis) < const Duration(milliseconds: 150)) {
-      return;
-    }
+  final poseDue =
+      widget.task.stayInPosition &&
+      now.difference(_lastAnalysis) >=
+          const Duration(milliseconds: 150);
 
-    _lastAnalysis = now;
+  final objectDue =
+      widget.task.objectInFrame &&
+      _objectProfilesReady &&
+      _objectRecognition.isAnalysisDue;
 
-    final frame = MlKitCameraImageConverter.convert(
-      image: image,
-      camera: _camera!,
-      deviceOrientation: _controller!.value.deviceOrientation,
-    );
+  if (!poseDue && !objectDue) {
+    return;
+  }
 
-    if (frame == null) {
-      return;
-    }
+  ObjectFrameSnapshot? objectSnapshot;
 
-    _processing = true;
-
+  // Copy the object frame BEFORE awaiting ML Kit.
+  if (objectDue) {
     try {
-      final poses = await _poseDetector!.processImage(frame.inputImage);
-
-      var faces = _latestFaces;
-
-      if (widget.task.poseReference == null ||
-          now.difference(_lastFaceAnalysis) >= _faceAnalysisInterval) {
-        _lastFaceAnalysis = now;
-        faces = await _faceDetector!.processImage(frame.inputImage);
-        _latestFaces = faces;
-      }
-
-      final current = TaskPoseAnalyzer.createSnapshot(
-        poses: poses,
-        faces: faces,
-        imageSize: frame.imageSize,
+      objectSnapshot = _objectRecognition.captureFrame(
+        image,
+        camera: camera,
+        deviceOrientation: controller.value.deviceOrientation,
       );
-
-      final hadCalibrationPose = _latestPose != null;
-
-      _latestPose = current;
-
-      if (!mounted) {
-        return;
-      }
-
-      // =======================================================
-      // CALIBRATION MODE
-      // =======================================================
-
-      if (widget.task.poseReference == null) {
-        final hasCalibrationPose = current != null;
-
-        final nextStatus = hasCalibrationPose
-            ? 'Position detected. Ready to calibrate.'
-            : 'Move into view so TaskProof can detect your position.';
-
-        // The calibration UI only depends on pose availability. Keep the
-        // freshest snapshot for the button without rebuilding for every ML
-        // result while availability remains unchanged.
-        if (hadCalibrationPose != hasCalibrationPose) {
-          setState(() {
-            _status = nextStatus;
-          });
-        } else {
-          _status = nextStatus;
-        }
-
-        return;
-      }
-
-      // =======================================================
-      // ACTIVE VERIFICATION
-      // =======================================================
-
-      _evaluatePosition(current);
     } catch (error) {
-      debugPrint('Live verification processing error: $error');
-    } finally {
-      _processing = false;
+      debugPrint('Focus object frame capture error: $error');
     }
   }
+
+  final frame = MlKitCameraImageConverter.convert(
+    image: image,
+    camera: camera,
+    deviceOrientation: controller.value.deviceOrientation,
+  );
+
+  if (frame == null) {
+    return;
+  }
+
+  _processing = true;
+
+  try {
+    var current = _latestPose;
+
+    // =====================================================
+    // BODY / POSITION
+    // =====================================================
+
+    if (poseDue) {
+      _lastAnalysis = now;
+
+      final poseDetector = _poseDetector;
+      final faceDetector = _faceDetector;
+
+      if (poseDetector != null && faceDetector != null) {
+        final poses = await poseDetector.processImage(
+          frame.inputImage,
+        );
+
+        var faces = _latestFaces;
+
+        if (widget.task.poseReference == null ||
+            now.difference(_lastFaceAnalysis) >=
+                _faceAnalysisInterval) {
+          _lastFaceAnalysis = now;
+
+          faces = await faceDetector.processImage(
+            frame.inputImage,
+          );
+
+          _latestFaces = faces;
+        }
+
+        current = TaskPoseAnalyzer.createSnapshot(
+          poses: poses,
+          faces: faces,
+          imageSize: frame.imageSize,
+        );
+
+        _latestPose = current;
+      }
+    }
+
+    // =====================================================
+    // REQUIRED OBJECTS
+    // =====================================================
+
+    if (objectDue && objectSnapshot != null) {
+  final detectedBounds = <Rect>[];
+
+  final locator = _objectLocator;
+
+  if (locator != null) {
+    try {
+      final objects = await locator.processImage(
+        frame.inputImage,
+      );
+
+      detectedBounds.addAll(
+        objects.map((object) => object.boundingBox),
+      );
+    } catch (error) {
+      debugPrint(
+        'Focus object localization error: $error',
+      );
+    }
+  }
+
+  // =====================================================
+  // STRICT FOCUS OBJECT VERIFICATION
+  // =====================================================
+  //
+  // If ML Kit cannot even locate an object in the frame,
+  // DO NOT let the visual matcher search the whole image.
+  //
+  // The previous version allowed its fallback matcher to
+  // search the background, which could create false matches.
+  // By not refreshing lastMatchedAt here, the required object
+  // naturally becomes "missing" after _objectMissingGrace.
+  // =====================================================
+
+  if (detectedBounds.isNotEmpty) {
+    final matches =
+        await _objectRecognition.analyzeSnapshot(
+      objectSnapshot,
+      detectedBounds: detectedBounds,
+    );
+
+    final matchesById = {
+      for (final match in matches) match.id: match,
+    };
+
+    final checkedAt = DateTime.now();
+
+    for (final object in _requiredObjects) {
+      final match = matchesById[object.id];
+
+      if (match == null) {
+        continue;
+      }
+
+      final strongMatch =
+          match.isMatch &&
+          !match.isTemporarilyMissing &&
+          match.confidence >= _focusObjectMinimumConfidence;
+
+      if (strongMatch) {
+        object.lastMatchedAt = checkedAt;
+      }
+    }
+  }
+}
+
+    if (!mounted) {
+      return;
+    }
+
+    // =====================================================
+    // CALIBRATION
+    // =====================================================
+
+    if (widget.task.stayInPosition &&
+        widget.task.poseReference == null) {
+      final hasCalibrationPose = current != null;
+
+      final nextStatus = hasCalibrationPose
+          ? 'Position detected. Ready to calibrate.'
+          : 'Move into view so TaskProof can detect your position.';
+
+      if (_status != nextStatus) {
+        setState(() {
+          _status = nextStatus;
+        });
+      }
+
+      return;
+    }
+
+    // This now evaluates BOTH enabled verification rules.
+    _evaluatePosition(current);
+  } catch (error) {
+    debugPrint(
+      'Live verification processing error: $error',
+    );
+  } finally {
+    _processing = false;
+  }
+}
 
   // ===========================================================
   // EVALUATE POSITION
   // ===========================================================
 
   void _evaluatePosition(PoseReference? current) {
-    final reference = widget.task.poseReference;
+  final reference = widget.task.poseReference;
 
+  String? violation;
+
+  if (widget.task.stayInPosition) {
     if (reference == null) {
       return;
     }
-
-    String? violation;
 
     // =========================================================
     // PERSON / POSITION MISSING
@@ -1969,32 +2266,7 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
       if (commonLandmarks.length < 3) {
         violation = 'Not enough of your reference position is visible.';
       } else {
-        // =====================================================
-        // LANDMARK MOVEMENT
-        // =====================================================
-
-        double totalMovement = 0;
-        double largestMovement = 0;
-
-        for (final type in commonLandmarks) {
-          final referencePoint = reference.landmarks[type]!;
-
-          final currentPoint = current.landmarks[type]!;
-
-          final dx = currentPoint.dx - referencePoint.dx;
-
-          final dy = currentPoint.dy - referencePoint.dy;
-
-          final distance = math.sqrt((dx * dx) + (dy * dy));
-
-          totalMovement += distance;
-
-          if (distance > largestMovement) {
-            largestMovement = distance;
-          }
-        }
-
-        final averageMovement = totalMovement / commonLandmarks.length;
+       
 
         // =====================================================
         // OVERALL POSITION
@@ -2023,6 +2295,7 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
         double? yawDifference;
         double? pitchDifference;
+        // ignore: unused_local_variable
         double? rollDifference;
 
         if (current.headYaw != null && reference.headYaw != null) {
@@ -2047,49 +2320,93 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
         }
 
         // =====================================================
-        // LOOKING AWAY
-        // Only checked when face orientation exists.
+        // LOOKING AWAY / ATTENTION CHANGE
         // =====================================================
 
         if ((yawDifference != null && yawDifference > thresholds.headYaw) ||
             (pitchDifference != null &&
                 pitchDifference > thresholds.headPitch)) {
-          violation = 'Look back toward your reference direction.';
+          violation = 'Look back toward your focus area.';
         }
+
         // =====================================================
-        // MAJOR POSITION / POSE CHANGE
+        // LEFT DESIGNATED FOCUS AREA
         // =====================================================
-        else if (averageMovement > thresholds.bodyPosition * 0.75 ||
-            largestMovement > thresholds.bodyPosition * 1.35) {
-          violation = 'Return to your reference position.';
-        }
-        // =====================================================
-        // MOVED FAR FROM ORIGINAL LOCATION / DISTANCE
-        // =====================================================
+
         else if (centerMovement > thresholds.bodyPosition ||
             scaleDifference > thresholds.bodyScale) {
-          violation = 'Move back to your reference position.';
-        }
-        // =====================================================
-        // HEAD TILT
-        // =====================================================
-        else if (rollDifference != null &&
-            rollDifference > thresholds.headRoll) {
-          violation = 'Return your head to your reference position.';
+          violation = 'Return to your focus area.';
         }
       }
     }
+  }
 
-    // =========================================================
-    // APPLY RESULT
-    // =========================================================
+  // =========================================================
+  // REQUIRED OBJECT
+  // =========================================================
 
+  // Position must pass AND the required object must pass.
+  if (violation == null && widget.task.objectInFrame) {
+    violation = _objectViolation(DateTime.now());
+  }
+
+  // =========================================================
+  // APPLY RESULT
+  // =========================================================
     if (violation == null) {
       _handleGoodPosition();
     } else {
       _handleViolation(violation);
     }
   }
+
+  String? _objectViolation(DateTime now) {
+  if (!widget.task.objectInFrame) {
+    return null;
+  }
+
+  if (!_objectProfilesReady) {
+    return null;
+  }
+
+  if (widget.task.requiredObjectIds.isEmpty) {
+    return 'No required object is configured.';
+  }
+
+  final monitoringStartedAt =
+      _objectMonitoringStartedAt ?? widget.task.startedAt;
+
+  if (monitoringStartedAt == null) {
+    return null;
+  }
+
+  final missingObjects = _requiredObjects.where((object) {
+    if (!object.available) {
+      return now.difference(monitoringStartedAt) >=
+          _objectInitialGrace;
+    }
+
+    final lastMatchedAt = object.lastMatchedAt;
+
+    if (lastMatchedAt == null) {
+      return now.difference(monitoringStartedAt) >=
+          _objectInitialGrace;
+    }
+
+    return now.difference(lastMatchedAt) >=
+        _objectMissingGrace;
+  }).toList();
+
+  if (missingObjects.isEmpty) {
+    return null;
+  }
+
+  if (missingObjects.length == 1) {
+    return '${missingObjects.first.name} is not detected.';
+  }
+
+  return '${missingObjects.length} required objects are not detected.';
+}
 
   // ===========================================================
   // VIOLATION
@@ -2114,11 +2431,11 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
       if (mounted && warningChanged) {
         setState(() {
           _warningReason = reason;
-          _status = 'Out of position';
+          _status = 'Focus interrupted';
         });
       } else {
         _warningReason = reason;
-        _status = 'Out of position';
+        _status = 'Focus interrupted';
       }
 
       _playWarning();
@@ -2138,7 +2455,7 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
     // don't instantly trigger the alarm.
     if (violationDuration <
         Duration(milliseconds: _thresholds.graceMilliseconds)) {
-      _status = 'Movement detected...';
+      _status = 'Checking focus...';
 
       return;
     }
@@ -2150,7 +2467,7 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
     setState(() {
       _warningActive = true;
       _recoveryStartedAt = null;
-      _status = 'Out of position';
+      _status = 'Focus interrupted';
     });
 
     _playWarning();
@@ -2241,7 +2558,7 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
     if (mounted) {
       setState(() {
-        _status = 'Out of position';
+        _status = 'Focus interrupted';
       });
     }
 
@@ -2293,6 +2610,8 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
       widget.task.startedAt = DateTime.now();
 
+      _objectMonitoringStartedAt ??= DateTime.now();
+
       _remainingTime.value = widget.task.duration;
 
       _warningActive = false;
@@ -2325,10 +2644,15 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
     final remaining = remainingLiveTime(widget.task);
 
-    if (remaining <= Duration.zero) {
-      _completeSession();
+  if (remaining <= Duration.zero) {
+  _completeSession();
 
       return;
+    }
+
+    if (widget.task.objectInFrame &&
+        _objectProfilesReady) {
+      _evaluatePosition(_latestPose);
     }
 
     // Also keep repeating warning if the pose detector
@@ -2929,6 +3253,20 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
   }
 }
 
+class _FocusRequiredObjectState {
+  _FocusRequiredObjectState({
+    required this.id,
+    required this.name,
+    required this.available,
+  });
+
+  final String id;
+  final String name;
+  final bool available;
+
+  DateTime? lastMatchedAt;
+}
+
 // =============================================================
 // VERIFICATION THRESHOLDS
 // =============================================================
@@ -2961,17 +3299,28 @@ class VerificationThresholds {
     // Low sensitivity = forgiving.
     // High sensitivity = strict.
 
-    return VerificationThresholds(
-      bodyPosition: _lerp(.22, .08, t),
-      bodyScale: _lerp(.42, .18, t),
-      headYaw: _lerp(50, 23, t),
-      headPitch: _lerp(37, 18, t),
-      headRoll: _lerp(40, 20, t),
-      graceMilliseconds: _lerp(2800, 1100, t).round(),
-    );
-  }
+  return VerificationThresholds(
+    // Keep the user inside roughly the same focus area,
+    // but allow normal sitting movement and fidgeting.
+    bodyPosition: .18,
+    bodyScale: .45,
 
-  static double _lerp(double start, double end, double t) {
+    // Sensitivity now controls how easily TaskProof
+    // considers the user to be looking away.
+    headYaw: _lerp(44, 18, t),
+    headPitch: _lerp(34, 14, t),
+
+    // Head tilt by itself is not a distraction.
+    headRoll: 180,
+
+    // Low sensitivity: about 1.5 seconds.
+    // Medium: about 1.1 seconds.
+    // High: about 0.65 seconds.
+    graceMilliseconds: _lerp(1500, 650, t).round(),
+    );
+    }
+
+    static double _lerp(double start, double end, double t) {
     return start + ((end - start) * t);
   }
 }
@@ -3293,6 +3642,162 @@ class _AppDrawer extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+
+// =============================================================
+// FAB PAINTER
+// =============================================================
+
+class _ApertureButtonPainter extends CustomPainter {
+  const _ApertureButtonPainter({
+    required this.progress,
+  });
+
+  final double progress;
+
+  @override
+  void paint(
+    Canvas canvas,
+    Size size,
+  ) {
+    final paint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 3.2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final center = Offset(
+      size.width / 2,
+      size.height / 2,
+    );
+
+    final plusOpacity = (1 - progress / .4).clamp(
+      0.0,
+      1.0,
+    );
+
+    final bracketProgress = ((progress - .2) / .55).clamp(
+      0.0,
+      1.0,
+    );
+
+    final checkOpacity = ((progress - .7) / .3).clamp(
+      0.0,
+      1.0,
+    );
+
+    if (plusOpacity > 0) {
+      paint.color = Colors.white.withValues(
+        alpha: plusOpacity,
+      );
+
+      canvas.drawLine(
+        Offset(
+          center.dx - 12,
+          center.dy,
+        ),
+        Offset(
+          center.dx + 12,
+          center.dy,
+        ),
+        paint,
+      );
+
+      canvas.drawLine(
+        Offset(
+          center.dx,
+          center.dy - 12,
+        ),
+        Offset(
+          center.dx,
+          center.dy + 12,
+        ),
+        paint,
+      );
+    }
+
+    if (bracketProgress > 0) {
+      paint.color = Colors.white;
+
+      const gap = 14.0;
+      const length = 8.5;
+
+      void bracket(
+        double dx,
+        double dy,
+      ) {
+        final target = Offset(
+          center.dx + dx * gap,
+          center.dy + dy * gap,
+        );
+
+        final origin = Offset.lerp(
+          center,
+          target,
+          bracketProgress,
+        )!;
+
+        final currentLength = length * bracketProgress;
+
+        canvas.drawLine(
+          origin,
+          origin.translate(
+            -dx * currentLength,
+            0,
+          ),
+          paint,
+        );
+
+        canvas.drawLine(
+          origin,
+          origin.translate(
+            0,
+            -dy * currentLength,
+          ),
+          paint,
+        );
+      }
+
+      bracket(-1, -1);
+      bracket(1, -1);
+      bracket(-1, 1);
+      bracket(1, 1);
+    }
+
+    if (checkOpacity > 0) {
+      paint.color = Colors.white.withValues(
+        alpha: checkOpacity,
+      );
+
+      final path = Path()
+        ..moveTo(
+          center.dx - 7,
+          center.dy + 2.5,
+        )
+        ..lineTo(
+          center.dx - 1.5,
+          center.dy + 7.5,
+        )
+        ..lineTo(
+          center.dx + 9.5,
+          center.dy - 4.5,
+        );
+
+      canvas.drawPath(
+        path,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(
+    covariant _ApertureButtonPainter oldDelegate,
+  ) {
+    return oldDelegate.progress != progress;
   }
 }
 

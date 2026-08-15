@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "30884495260",
+    "project_id": "taskproof-b2ec8",
+    "storage_bucket": "taskproof-b2ec8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:30884495260:android:9fc4815c17c1ea54261259",
+        "android_client_info": {
+          "package_name": "com.example.taskguard"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfDAUBQCDH4jPxcmcTUvo0lv9G9EHd008"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

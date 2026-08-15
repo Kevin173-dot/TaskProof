@@ -159,6 +159,7 @@ class TaskData {
     required this.alarm,
     required this.sensitivity,
     this.poseReference,
+    this.requiredObjectIds = const [],
     this.activeConfig,
     this.workoutConfig,
     this.status = TaskStatus.ready,
@@ -191,6 +192,9 @@ class TaskData {
   // Mutable because a task can calibrate when
   // the live session starts.
   PoseReference? poseReference;
+
+  // Saved 3D objects required for Focus verification.
+  final List<String> requiredObjectIds;
 
   TaskStatus status;
 
@@ -579,8 +583,6 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   final List<SavedObjectScan> selectedObjectScans = [];
 
-  int capturedObjects = 0;
-
   // ===========================================================
   // SETTINGS
   // ===========================================================
@@ -600,8 +602,16 @@ class _NewTaskPageState extends State<NewTaskPage> {
   bool taskIconManuallySelected = false;
 
   // Change when subscriptions are connected.
-  final bool isPro = false;
+  // ===========================================================
+// TEMPORARY PRO TESTING
+// ===========================================================
 
+// Set to true to test as a Pro user.
+// Set to false to test as a Free user.
+// IMPORTANT: Turn this off before production release.
+  static const bool _forceProForTesting = true;
+
+  bool get isPro => _forceProForTesting;
   // ===========================================================
   // INIT
   // ===========================================================
@@ -2127,7 +2137,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
     }
 
     if (objectInFrame) {
-      return 'Capture the objects that must remain visible.';
+      return 'Scan or select the objects that must remain visible.';
     }
 
     return 'Select a verification rule first.';
@@ -2167,14 +2177,16 @@ class _NewTaskPageState extends State<NewTaskPage> {
             ),
 
           if (objectInFrame)
-            _ReferenceRow(
-              icon: Icons.add_a_photo_outlined,
-              title: 'Required Objects',
-              subtitle: '$capturedObjects/3 captured',
-              complete: capturedObjects > 0,
-              dark: widget.isDarkMode,
-              onTap: _captureObject,
-            ),
+      _ReferenceRow(
+        icon: Icons.view_in_ar_rounded,
+        title: 'Required Objects',
+        subtitle: selectedObjectScans.isEmpty
+            ? 'Scan or select a required object'
+            : '${selectedObjectScans.length}/3 objects selected',
+        complete: selectedObjectScans.isNotEmpty,
+        dark: widget.isDarkMode,
+        onTap: _openObjectScanner,
+      ),
 
           if (!stayInPosition && !objectInFrame)
             const Padding(
@@ -2218,17 +2230,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
     _showMessage('Reference position captured.');
   }
 
-  void _captureObject() {
-    if (capturedObjects >= 3) {
-      return;
-    }
 
-    setState(() {
-      capturedObjects++;
-    });
-
-    _showMessage('$capturedObjects/3 objects captured.');
-  }
 
   // ===========================================================
   // ALARM
@@ -2793,39 +2795,40 @@ class _NewTaskPageState extends State<NewTaskPage> {
   }
 
   String get _sensitivityDescription {
-    if (selectedMode == TaskMode.active) {
-      if (sensitivity < .34) {
-        return 'Low: requires clearer movement changes before TaskProof reacts.';
-      }
-
-      if (sensitivity < .67) {
-        return 'Medium: balanced movement and inactivity detection.';
-      }
-
-      return 'High: notices smaller activity changes more quickly.';
-    }
-
-    if (selectedMode == TaskMode.workout) {
-      if (sensitivity < .34) {
-        return 'Low: more forgiving workout movement detection.';
-      }
-
-      if (sensitivity < .67) {
-        return 'Medium: balanced exercise movement detection.';
-      }
-
-      return 'High: detects smaller exercise movement differences more strictly.';
-    }
-
+  if (selectedMode == TaskMode.active) {
     if (sensitivity < .34) {
-      return 'Low: only major changes should trigger the warning.';
+      return 'Low: allows more inactivity and movement variation.';
     }
 
     if (sensitivity < .67) {
-      return 'Medium: allows normal movement but catches major posture changes and sustained looking away.';
+      return 'Medium: balanced movement and inactivity detection.';
     }
 
-    return 'High: keeps you much closer to the reference pose.';
+    return 'High: notices smaller activity changes more quickly.';
+  }
+
+  if (selectedMode == TaskMode.workout) {
+    if (sensitivity < .34) {
+      return 'Low: more forgiving workout movement detection.';
+    }
+
+    if (sensitivity < .67) {
+      return 'Medium: balanced exercise movement detection.';
+    }
+
+    return 'High: detects smaller exercise movement differences more strictly.';
+  }
+
+    // Focus mode
+    if (sensitivity < .34) {
+      return 'Low: only obvious or sustained loss of attention triggers a warning.';
+    }
+
+    if (sensitivity < .67) {
+      return 'Medium: allows natural movement and fidgeting, but catches sustained looking away or leaving your focus area.';
+    }
+
+    return 'High: reacts quickly to attention changes while still allowing normal body movement.';
   }
   // ===========================================================
   // PRO DIALOG
@@ -2884,6 +2887,14 @@ class _NewTaskPageState extends State<NewTaskPage> {
       return;
     }
 
+    if (selectedMode == TaskMode.focus &&
+        objectInFrame &&
+        selectedObjectScans.isEmpty) {
+      _showMessage('Scan or select at least one required object.');
+
+      return;
+    }
+
     DateTime? scheduledFor;
 
     if (scheduleEnabled) {
@@ -2924,6 +2935,11 @@ class _NewTaskPageState extends State<NewTaskPage> {
       sensitivity: sensitivity,
 
       poseReference: selectedMode == TaskMode.focus ? referencePose : null,
+
+      requiredObjectIds:
+          selectedMode == TaskMode.focus && objectInFrame
+              ? selectedObjectScans.map((scan) => scan.id).toList()
+              : const [],
 
       activeConfig: selectedMode == TaskMode.active
           ? ActiveTaskConfig(
