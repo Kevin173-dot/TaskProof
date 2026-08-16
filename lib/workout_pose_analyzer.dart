@@ -11,6 +11,52 @@ enum WorkoutBodyCoverage { insufficient, good, excellent }
 
 enum JumpingJackPhase { waitingForClosed, closed, opening, open, closing }
 
+enum PushUpPhase { waitingForTop, top, descending, bottom, ascending }
+
+enum PushUpTrackedSide { none, left, right }
+
+class PushUpDebugData {
+  const PushUpDebugData({
+    required this.poseDetected,
+    required this.signalsAvailable,
+    required this.trackedSide,
+    required this.torsoHorizontal,
+    required this.topCandidate,
+    required this.bottomCandidate,
+    required this.phase,
+    required this.signalMissingMilliseconds,
+    required this.repCounted,
+    required this.topThreshold,
+    required this.bottomThreshold,
+    this.shoulderConfidence,
+    this.elbowConfidence,
+    this.wristConfidence,
+    this.elbowAngle,
+    this.leftElbowAngle,
+    this.rightElbowAngle,
+    this.bodyAlignmentAngle,
+  });
+
+  final bool poseDetected;
+  final bool signalsAvailable;
+  final PushUpTrackedSide trackedSide;
+  final double? shoulderConfidence;
+  final double? elbowConfidence;
+  final double? wristConfidence;
+  final double? elbowAngle;
+  final double? leftElbowAngle;
+  final double? rightElbowAngle;
+  final bool torsoHorizontal;
+  final double? bodyAlignmentAngle;
+  final bool topCandidate;
+  final bool bottomCandidate;
+  final PushUpPhase phase;
+  final int signalMissingMilliseconds;
+  final bool repCounted;
+  final double topThreshold;
+  final double bottomThreshold;
+}
+
 enum _PrecisionRepPhase {
   waitingForStart,
   start,
@@ -85,8 +131,8 @@ String workoutCameraGuidance(
   if (observation.repetitionTrackingEnabled) {
     if (!observation.repetitionSignalsAvailable) {
       return switch (exercise) {
-        WorkoutExercise.pushUps =>
-          'Keep one shoulder, elbow, wrist, hip, and knee in frame',
+         WorkoutExercise.pushUps =>
+          'Keep one full arm plus your shoulders and hips in frame',
         WorkoutExercise.squats =>
           'Keep both hips, knees, ankles, and your torso in frame',
         WorkoutExercise.sitUps => 'Keep one shoulder, hip, and knee in frame',
@@ -137,6 +183,7 @@ class WorkoutPoseObservation {
     required this.repCounted,
     required this.formFeedback,
     this.jumpingJackDebug,
+    this.pushUpDebug,
     this.repetitionTrackingEnabled = false,
     this.repetitionSignalsAvailable = false,
     this.repetitionReady = false,
@@ -153,6 +200,7 @@ class WorkoutPoseObservation {
   final bool repCounted;
   final String? formFeedback;
   final JumpingJackDebugData? jumpingJackDebug;
+  final PushUpDebugData? pushUpDebug;
   final bool repetitionTrackingEnabled;
   final bool repetitionSignalsAvailable;
   final bool repetitionReady;
@@ -189,6 +237,7 @@ class WorkoutPoseAnalyzer {
   });
 
   static const double landmarkConfidenceThreshold = 0.45;
+  static const double pushUpLandmarkConfidenceThreshold = 0.30;
   static const double jumpingJackLandmarkConfidenceThreshold = 0.30;
   static const double _minimumJumpingJackHipWidth = 0.010;
   static const int _jumpingJackBaselineSampleTarget = 5;
@@ -198,10 +247,11 @@ class WorkoutPoseAnalyzer {
   final double sensitivity;
   final bool formChecking;
 
-  double get _landmarkConfidenceThreshold =>
-      exercise == WorkoutExercise.jumpingJacks
-      ? jumpingJackLandmarkConfidenceThreshold
-      : landmarkConfidenceThreshold;
+  double get _landmarkConfidenceThreshold => switch (exercise) {
+    WorkoutExercise.pushUps => pushUpLandmarkConfidenceThreshold,
+    WorkoutExercise.jumpingJacks => jumpingJackLandmarkConfidenceThreshold,
+    _ => landmarkConfidenceThreshold,
+  };
 
   _PoseSample? _previous;
   bool _cycleStarted = false;
@@ -216,7 +266,15 @@ class WorkoutPoseAnalyzer {
   int _precisionRepConfirmationFrames = 0;
   DateTime? _lastPrecisionRepSignalsAt;
 
+  PushUpPhase _pushUpPhase = PushUpPhase.waitingForTop;
+  int _pushUpConfirmationFrames = 0;
+  DateTime? _lastPushUpUsableSignalAt;
+  bool? _pushUpTrackedRight;
+  bool? _pushUpSwitchCandidateRight;
+  int _pushUpSwitchCandidateFrames = 0;
+
   JumpingJackPhase _jumpingJackPhase = JumpingJackPhase.waitingForClosed;
+  
   int _jumpingJackConfirmationFrames = 0;
   bool _jumpingJackArmsOpened = false;
   bool _jumpingJackKneesOpened = false;
@@ -242,6 +300,13 @@ class WorkoutPoseAnalyzer {
     _precisionRepConfirmationFrames = 0;
     _lastPrecisionRepSignalsAt = null;
 
+    _pushUpPhase = PushUpPhase.waitingForTop;
+    _pushUpConfirmationFrames = 0;
+    _lastPushUpUsableSignalAt = null;
+    _pushUpTrackedRight = null;
+    _pushUpSwitchCandidateRight = null;
+    _pushUpSwitchCandidateFrames = 0;
+
     resetRepPhase();
   }
 
@@ -251,12 +316,16 @@ class WorkoutPoseAnalyzer {
     final jumpingJackWasCalibratedClosed =
         _jumpingJackPhase == JumpingJackPhase.closed &&
         _jumpingJackBaselineReady;
-    final precisionWasReady =
-        _usesPrecisionRepTracker &&
-        _precisionRepPhase == _PrecisionRepPhase.start;
-    final precisionSignalsAt = _lastPrecisionRepSignalsAt;
+        final precisionWasReady =
+          _usesPrecisionRepTracker &&
+          _precisionRepPhase == _PrecisionRepPhase.start;
+        final precisionSignalsAt = _lastPrecisionRepSignalsAt;
+        final pushUpWasReady =
+            exercise == WorkoutExercise.pushUps &&
+            _pushUpPhase == PushUpPhase.top;
+        final pushUpSignalsAt = _lastPushUpUsableSignalAt;
 
-    _previous = null;
+        _previous = null;
     _cycleStarted = false;
     _cycleTargetReached = false;
     _burpeeStage = 0;
@@ -270,10 +339,18 @@ class WorkoutPoseAnalyzer {
     _precisionRepPhase = precisionWasReady
         ? _PrecisionRepPhase.start
         : _PrecisionRepPhase.waitingForStart;
-    _precisionRepConfirmationFrames = 0;
-    _lastPrecisionRepSignalsAt = precisionWasReady ? precisionSignalsAt : null;
+        _precisionRepConfirmationFrames = 0;
+      _lastPrecisionRepSignalsAt = precisionWasReady ? precisionSignalsAt : null;
 
-    _jumpingJackPhase = jumpingJackWasCalibratedClosed
+      _pushUpPhase = pushUpWasReady
+          ? PushUpPhase.top
+          : PushUpPhase.waitingForTop;
+      _pushUpConfirmationFrames = 0;
+      _lastPushUpUsableSignalAt = pushUpWasReady ? pushUpSignalsAt : null;
+      _pushUpSwitchCandidateRight = null;
+      _pushUpSwitchCandidateFrames = 0;
+
+      _jumpingJackPhase = jumpingJackWasCalibratedClosed
         ? JumpingJackPhase.closed
         : JumpingJackPhase.waitingForClosed;
     _jumpingJackConfirmationFrames = 0;
@@ -288,7 +365,7 @@ class WorkoutPoseAnalyzer {
     required DateTime timestamp,
   }) {
     if (imageSize.width <= 0 || imageSize.height <= 0 || poses.isEmpty) {
-      return _absent();
+      return _absent(timestamp: timestamp);
     }
 
     Map<PoseLandmarkType, WorkoutLandmark>? best;
@@ -325,7 +402,7 @@ class WorkoutPoseAnalyzer {
     }
 
     if (best == null) {
-      return _absent();
+      return _absent(timestamp: timestamp);
     }
     return analyzeLandmarks(best, timestamp: timestamp);
   }
@@ -336,21 +413,34 @@ class WorkoutPoseAnalyzer {
     Map<PoseLandmarkType, WorkoutLandmark> landmarks, {
     required DateTime timestamp,
   }) {
-    final confident = <PoseLandmarkType, Offset>{};
-    for (final entry in landmarks.entries) {
-      if (entry.value.confidence >= _landmarkConfidenceThreshold) {
-        confident[entry.key] = entry.value.position;
-      }
-    }
-    if (confident.length < 4) {
-      return _absent();
-    }
+       final confident = <PoseLandmarkType, Offset>{};
+        final confidences = <PoseLandmarkType, double>{};
 
-    final sample = _PoseSample.from(confident, timestamp);
-    final coverage = _coverage(sample.landmarks);
-    final tooClose =
-        exercise != WorkoutExercise.jumpingJacks &&
-        (sample.bounds.width > 0.88 || sample.bounds.height > 0.94);
+        for (final entry in landmarks.entries) {
+          if (entry.value.confidence >= _landmarkConfidenceThreshold) {
+            confident[entry.key] = entry.value.position;
+            confidences[entry.key] = entry.value.confidence;
+          }
+        }
+
+        if (confident.length < 4) {
+          return _absent(timestamp: timestamp);
+        }
+
+        final sample = _PoseSample.from(
+          confident,
+          timestamp,
+          confidences: confidences,
+        );
+
+        final coverage = _coverage(sample.landmarks);
+
+        final tooClose = switch (exercise) {
+          WorkoutExercise.pushUps =>
+            sample.bounds.width > 0.985 || sample.bounds.height > 0.965,
+          WorkoutExercise.jumpingJacks => false,
+          _ => sample.bounds.width > 0.88 || sample.bounds.height > 0.94,
+        };
     final previous = _previous;
     final movement = previous == null
         ? 0.0
@@ -371,18 +461,19 @@ class WorkoutPoseAnalyzer {
     var repetitionSignalsAvailable = false;
     var repetitionReady = false;
     JumpingJackDebugData? jumpingJackDebug;
-
+    PushUpDebugData? pushUpDebug;
     if (exercise == WorkoutExercise.jumpingJacks ||
         _usesPrecisionRepTracker ||
         (coverage != WorkoutBodyCoverage.insufficient && !tooClose)) {
-      switch (exercise) {
-        case WorkoutExercise.pushUps:
+        switch (exercise) {
+          case WorkoutExercise.pushUps:
           final update = _updatePushUp(sample);
           repCounted = update.repCounted;
           poseValid = update.poseValid;
           precisionRepActivity = update.exerciseActive;
           repetitionSignalsAvailable = update.signalsAvailable;
           repetitionReady = update.ready;
+          pushUpDebug = update.debug;
         case WorkoutExercise.squats:
           final update = _updateSquat(sample);
           repCounted = update.repCounted;
@@ -475,6 +566,7 @@ class WorkoutPoseAnalyzer {
       repCounted: repCounted,
       formFeedback: formChecking ? _formFeedback(sample.landmarks) : null,
       jumpingJackDebug: jumpingJackDebug,
+      pushUpDebug: pushUpDebug,
       repetitionTrackingEnabled: _usesPrecisionRepTracker,
       repetitionSignalsAvailable: repetitionSignalsAvailable,
       repetitionReady: repetitionReady,
@@ -484,21 +576,45 @@ class WorkoutPoseAnalyzer {
     );
   }
 
-  WorkoutPoseObservation _absent() {
-    _stableFrames = 0;
-    return const WorkoutPoseObservation(
-      personPresent: false,
-      coverage: WorkoutBodyCoverage.insufficient,
-      tooClose: false,
-      cameraStable: false,
-      exercisePoseValid: false,
-      exerciseActive: false,
-      meaningfulMovement: false,
-      repCounted: false,
-      formFeedback: null,
-      overlayLandmarks: {},
-    );
-  }
+    WorkoutPoseObservation _absent({DateTime? timestamp}) {
+      _stableFrames = 0;
+
+      final pushUpMissingFor =
+          timestamp == null || _lastPushUpUsableSignalAt == null
+          ? Duration.zero
+          : timestamp.difference(_lastPushUpUsableSignalAt!);
+
+      final pushUpDebug = exercise == WorkoutExercise.pushUps
+          ? PushUpDebugData(
+              poseDetected: false,
+              signalsAvailable: false,
+              trackedSide: _pushUpTrackedSide,
+              torsoHorizontal: false,
+              topCandidate: false,
+              bottomCandidate: false,
+              phase: _pushUpPhase,
+              signalMissingMilliseconds:
+                  math.max(0, pushUpMissingFor.inMilliseconds),
+              repCounted: false,
+              topThreshold: _pushUpTopThreshold,
+              bottomThreshold: _pushUpBottomThreshold,
+            )
+          : null;
+
+      return WorkoutPoseObservation(
+        personPresent: false,
+        coverage: WorkoutBodyCoverage.insufficient,
+        tooClose: false,
+        cameraStable: false,
+        exercisePoseValid: false,
+        exerciseActive: false,
+        meaningfulMovement: false,
+        repCounted: false,
+        formFeedback: null,
+        pushUpDebug: pushUpDebug,
+        overlayLandmarks: const {},
+      );
+    }
 
   // ignore: duplicate_ignore
   // ignore: unused_element
@@ -509,65 +625,343 @@ class WorkoutPoseAnalyzer {
   double get _flexedElbowThreshold => _lerp(92, 105, sensitivity);
   double get _lungeThreshold => _lerp(105, 118, sensitivity);
 
-  _PrecisionRepUpdate _updatePushUp(_PoseSample sample) {
+     double get _pushUpTopThreshold => _lerp(148, 142, sensitivity);
+
+  double get _pushUpBottomThreshold => _lerp(122, 132, sensitivity);
+
+  PushUpTrackedSide get _pushUpTrackedSide => switch (_pushUpTrackedRight) {
+    true => PushUpTrackedSide.right,
+    false => PushUpTrackedSide.left,
+    null => PushUpTrackedSide.none,
+  };
+
+  _PushUpUpdate _updatePushUp(_PoseSample sample) {
+    const signalLossTolerance = Duration(milliseconds: 900);
+    const topConfirmationFrames = 2;
+
     final points = sample.landmarks;
-    final topThreshold = _lerp(156, 150, sensitivity);
-    final bottomThreshold = _lerp(105, 115, sensitivity);
+    final confidences = sample.confidences;
 
-    var signalsAvailable = false;
-    var validPushUpShape = false;
-    var top = false;
-    var bottom = false;
+    final topThreshold = _pushUpTopThreshold;
+    final bottomThreshold = _pushUpBottomThreshold;
 
-    for (final right in const [false, true]) {
-      final shoulder =
-          points[right
-              ? PoseLandmarkType.rightShoulder
-              : PoseLandmarkType.leftShoulder];
-      final elbow =
-          points[right
-              ? PoseLandmarkType.rightElbow
-              : PoseLandmarkType.leftElbow];
-      final wrist =
-          points[right
-              ? PoseLandmarkType.rightWrist
-              : PoseLandmarkType.leftWrist];
-      final hip =
-          points[right ? PoseLandmarkType.rightHip : PoseLandmarkType.leftHip];
-      final knee =
-          points[right
-              ? PoseLandmarkType.rightKnee
-              : PoseLandmarkType.leftKnee];
+    final leftArm = _pushUpArm(points, confidences, right: false);
+    final rightArm = _pushUpArm(points, confidences, right: true);
 
-      if (shoulder == null ||
-          elbow == null ||
-          wrist == null ||
-          hip == null ||
-          knee == null) {
-        continue;
+    final selectedArm = _selectPushUpArm(leftArm, rightArm);
+
+    final hipCenter = _center(points, const [
+      PoseLandmarkType.leftHip,
+      PoseLandmarkType.rightHip,
+    ]);
+
+    final selectedHip = selectedArm == null
+        ? null
+        : points[selectedArm.right
+                  ? PoseLandmarkType.rightHip
+                  : PoseLandmarkType.leftHip] ??
+              hipCenter;
+
+    final signalsAvailable = selectedArm != null && selectedHip != null;
+
+    var torsoHorizontal = false;
+
+    if (selectedArm != null && selectedHip != null) {
+      final torsoVector = selectedArm.shoulder - selectedHip;
+
+      torsoHorizontal =
+          torsoVector.dx.abs() > torsoVector.dy.abs() * 0.55;
+    }
+
+    final usableSignal = signalsAvailable && torsoHorizontal;
+
+    final previousUsableSignalAt = _lastPushUpUsableSignalAt;
+
+    if (usableSignal) {
+      _lastPushUpUsableSignalAt = sample.timestamp;
+    }
+
+    final missingFor = usableSignal
+        ? Duration.zero
+        : previousUsableSignalAt == null
+        ? Duration.zero
+        : sample.timestamp.difference(previousUsableSignalAt);
+
+    if (!usableSignal) {
+      if (previousUsableSignalAt != null &&
+          missingFor > signalLossTolerance) {
+        _resetPushUpPhase();
       }
 
-      signalsAvailable = true;
-      final elbowAngle = _angle(shoulder, elbow, wrist);
-      final bodyAlignment = _angle(shoulder, hip, knee);
-      final torsoVector = shoulder - hip;
-      final horizontal = torsoVector.dx.abs() > torsoVector.dy.abs() * 0.75;
-      final straightBody = bodyAlignment >= 145;
+      return _PushUpUpdate(
+        repCounted: false,
+        poseValid: false,
+        exerciseActive: _pushUpPhase != PushUpPhase.waitingForTop,
+        signalsAvailable: signalsAvailable,
+        ready: _pushUpPhase == PushUpPhase.top,
+        debug: PushUpDebugData(
+          poseDetected: true,
+          signalsAvailable: signalsAvailable,
+          trackedSide: _pushUpTrackedSide,
+          shoulderConfidence: selectedArm?.shoulderConfidence,
+          elbowConfidence: selectedArm?.elbowConfidence,
+          wristConfidence: selectedArm?.wristConfidence,
+          elbowAngle: selectedArm?.angle,
+          leftElbowAngle: leftArm?.angle,
+          rightElbowAngle: rightArm?.angle,
+          torsoHorizontal: torsoHorizontal,
+          bodyAlignmentAngle: _pushUpBodyAlignment(points, selectedArm),
+          topCandidate: false,
+          bottomCandidate: false,
+          phase: _pushUpPhase,
+          signalMissingMilliseconds:
+              math.max(0, missingFor.inMilliseconds),
+          repCounted: false,
+          topThreshold: topThreshold,
+          bottomThreshold: bottomThreshold,
+        ),
+      );
+    }
 
-      if (horizontal && straightBody) {
-        validPushUpShape = true;
-        if (elbowAngle >= topThreshold) top = true;
-        if (elbowAngle <= bottomThreshold) bottom = true;
+    final activeArm = selectedArm;
+    final elbowAngle = activeArm.angle;
+
+    final topCandidate = elbowAngle >= topThreshold;
+    final bottomCandidate = elbowAngle <= bottomThreshold;
+
+    final previousPhase = _pushUpPhase;
+
+    var repCounted = false;
+
+    switch (_pushUpPhase) {
+      case PushUpPhase.waitingForTop:
+        if (topCandidate) {
+          _pushUpConfirmationFrames++;
+
+          if (_pushUpConfirmationFrames >= topConfirmationFrames) {
+            _pushUpPhase = PushUpPhase.top;
+            _pushUpConfirmationFrames = 0;
+            _cycleTargetReached = false;
+          }
+        } else {
+          _pushUpConfirmationFrames = 0;
+        }
+
+      case PushUpPhase.top:
+        if (bottomCandidate) {
+          _pushUpPhase = PushUpPhase.bottom;
+          _pushUpConfirmationFrames = 0;
+          _cycleTargetReached = true;
+        } else if (!topCandidate) {
+          _pushUpPhase = PushUpPhase.descending;
+          _pushUpConfirmationFrames = 0;
+        }
+
+      case PushUpPhase.descending:
+        if (bottomCandidate) {
+          _pushUpPhase = PushUpPhase.bottom;
+          _pushUpConfirmationFrames = 0;
+          _cycleTargetReached = true;
+        } else if (topCandidate) {
+          _pushUpPhase = PushUpPhase.top;
+          _pushUpConfirmationFrames = 0;
+          _cycleTargetReached = false;
+        }
+
+      case PushUpPhase.bottom:
+        if (topCandidate) {
+          _pushUpPhase = PushUpPhase.top;
+          _pushUpConfirmationFrames = 0;
+          _cycleTargetReached = false;
+          repCounted = true;
+        } else if (!bottomCandidate) {
+          _pushUpPhase = PushUpPhase.ascending;
+          _pushUpConfirmationFrames = 0;
+        }
+
+      case PushUpPhase.ascending:
+        if (topCandidate) {
+          _pushUpPhase = PushUpPhase.top;
+          _pushUpConfirmationFrames = 0;
+          _cycleTargetReached = false;
+          repCounted = true;
+        } else if (bottomCandidate) {
+          _pushUpPhase = PushUpPhase.bottom;
+          _pushUpConfirmationFrames = 0;
+        }
+    }
+
+    final bodyAlignment = _pushUpBodyAlignment(points, activeArm);
+
+    final exerciseActive =
+        repCounted ||
+        previousPhase != _pushUpPhase ||
+        _pushUpPhase == PushUpPhase.descending ||
+        _pushUpPhase == PushUpPhase.bottom ||
+        _pushUpPhase == PushUpPhase.ascending;
+
+    return _PushUpUpdate(
+      repCounted: repCounted,
+      poseValid: torsoHorizontal,
+      exerciseActive: exerciseActive,
+      signalsAvailable: true,
+      ready: _pushUpPhase == PushUpPhase.top,
+      debug: PushUpDebugData(
+        poseDetected: true,
+        signalsAvailable: true,
+        trackedSide: _pushUpTrackedSide,
+        shoulderConfidence: activeArm.shoulderConfidence,
+        elbowConfidence: activeArm.elbowConfidence,
+        wristConfidence: activeArm.wristConfidence,
+        elbowAngle: elbowAngle,
+        leftElbowAngle: leftArm?.angle,
+        rightElbowAngle: rightArm?.angle,
+        torsoHorizontal: torsoHorizontal,
+        bodyAlignmentAngle: bodyAlignment,
+        topCandidate: topCandidate,
+        bottomCandidate: bottomCandidate,
+        phase: _pushUpPhase,
+        signalMissingMilliseconds: 0,
+        repCounted: repCounted,
+        topThreshold: topThreshold,
+        bottomThreshold: bottomThreshold,
+      ),
+    );
+  }
+
+  _PushUpArmSample? _pushUpArm(
+    Map<PoseLandmarkType, Offset> points,
+    Map<PoseLandmarkType, double> confidences, {
+    required bool right,
+  }) {
+    final shoulderType = right
+        ? PoseLandmarkType.rightShoulder
+        : PoseLandmarkType.leftShoulder;
+
+    final elbowType = right
+        ? PoseLandmarkType.rightElbow
+        : PoseLandmarkType.leftElbow;
+
+    final wristType = right
+        ? PoseLandmarkType.rightWrist
+        : PoseLandmarkType.leftWrist;
+
+    final shoulder = points[shoulderType];
+    final elbow = points[elbowType];
+    final wrist = points[wristType];
+
+    if (shoulder == null || elbow == null || wrist == null) {
+      return null;
+    }
+
+    final shoulderConfidence = confidences[shoulderType] ?? 1;
+    final elbowConfidence = confidences[elbowType] ?? 1;
+    final wristConfidence = confidences[wristType] ?? 1;
+
+    final weakestConfidence = math.min(
+      shoulderConfidence,
+      math.min(elbowConfidence, wristConfidence),
+    );
+
+    final averageConfidence =
+        (shoulderConfidence + elbowConfidence + wristConfidence) / 3;
+
+    return _PushUpArmSample(
+      right: right,
+      shoulder: shoulder,
+      elbow: elbow,
+      wrist: wrist,
+      shoulderConfidence: shoulderConfidence,
+      elbowConfidence: elbowConfidence,
+      wristConfidence: wristConfidence,
+      angle: _angle(shoulder, elbow, wrist),
+      score: weakestConfidence * 0.70 + averageConfidence * 0.30,
+    );
+  }
+
+  _PushUpArmSample? _selectPushUpArm(
+    _PushUpArmSample? left,
+    _PushUpArmSample? right,
+  ) {
+    _PushUpArmSample? tracked = switch (_pushUpTrackedRight) {
+      true => right,
+      false => left,
+      null => null,
+    };
+
+    if (tracked == null) {
+      final replacement = left == null
+          ? right
+          : right == null
+          ? left
+          : (right.score > left.score ? right : left);
+
+      if (replacement != null) {
+        _pushUpTrackedRight = replacement.right;
+      }
+
+      _pushUpSwitchCandidateRight = null;
+      _pushUpSwitchCandidateFrames = 0;
+
+      return replacement;
+    }
+
+    final alternate = tracked.right ? left : right;
+
+    final safeToImproveSelection =
+        _pushUpPhase == PushUpPhase.waitingForTop ||
+        _pushUpPhase == PushUpPhase.top;
+
+    if (safeToImproveSelection &&
+        alternate != null &&
+        alternate.score >= tracked.score + 0.16) {
+      if (_pushUpSwitchCandidateRight == alternate.right) {
+        _pushUpSwitchCandidateFrames++;
+      } else {
+        _pushUpSwitchCandidateRight = alternate.right;
+        _pushUpSwitchCandidateFrames = 1;
+      }
+
+      if (_pushUpSwitchCandidateFrames >= 3) {
+        _pushUpTrackedRight = alternate.right;
+        _pushUpSwitchCandidateRight = null;
+        _pushUpSwitchCandidateFrames = 0;
+        tracked = alternate;
+      }
+    } else {
+      _pushUpSwitchCandidateRight = null;
+      _pushUpSwitchCandidateFrames = 0;
+    }
+
+    return tracked;
+  }
+
+  double? _pushUpBodyAlignment(
+    Map<PoseLandmarkType, Offset> points,
+    _PushUpArmSample? selectedArm,
+  ) {
+    if (selectedArm != null) {
+      final hip = points[selectedArm.right
+          ? PoseLandmarkType.rightHip
+          : PoseLandmarkType.leftHip];
+
+      final knee = points[selectedArm.right
+          ? PoseLandmarkType.rightKnee
+          : PoseLandmarkType.leftKnee];
+
+      if (hip != null && knee != null) {
+        return _angle(selectedArm.shoulder, hip, knee);
       }
     }
 
-    return _updatePrecisionRepCycle(
-      timestamp: sample.timestamp,
-      signalsAvailable: signalsAvailable,
-      startCandidate: top,
-      targetCandidate: bottom,
-      poseValid: signalsAvailable && validPushUpShape,
-    );
+    return _average(_bodyAlignmentAngles(points));
+  }
+
+  void _resetPushUpPhase() {
+    _pushUpPhase = PushUpPhase.waitingForTop;
+    _pushUpConfirmationFrames = 0;
+    _lastPushUpUsableSignalAt = null;
+    _cycleTargetReached = false;
   }
 
   _PrecisionRepUpdate _updateSquat(_PoseSample sample) {
@@ -964,21 +1358,25 @@ class WorkoutPoseAnalyzer {
     final visible = required.where(points.containsKey).length;
     final ratio = visible / required.length;
     final semanticReady = switch (exercise) {
-      WorkoutExercise.pushUps =>
-        _completeSide(points, const [
+          WorkoutExercise.pushUps =>
+        (_completeSide(points, const [
               PoseLandmarkType.leftShoulder,
               PoseLandmarkType.leftElbow,
               PoseLandmarkType.leftWrist,
-              PoseLandmarkType.leftHip,
-              PoseLandmarkType.leftKnee,
             ]) ||
             _completeSide(points, const [
               PoseLandmarkType.rightShoulder,
               PoseLandmarkType.rightElbow,
               PoseLandmarkType.rightWrist,
-              PoseLandmarkType.rightHip,
-              PoseLandmarkType.rightKnee,
-            ]),
+            ])) &&
+        _hasAny(points, const [
+          PoseLandmarkType.leftShoulder,
+          PoseLandmarkType.rightShoulder,
+        ]) &&
+        _hasAny(points, const [
+          PoseLandmarkType.leftHip,
+          PoseLandmarkType.rightHip,
+        ]),
       WorkoutExercise.squats || WorkoutExercise.lunges =>
         _completeSide(points, const [
               PoseLandmarkType.leftHip,
@@ -1010,15 +1408,25 @@ class WorkoutPoseAnalyzer {
       WorkoutExercise.jumpingJacks => _hasJumpingJackSignals(points),
       _ => visible >= math.min(4, required.length),
     };
-    // One complete, high-confidence body side is enough for side-on exercises
-    // such as push-ups; requiring both sides rejects otherwise excellent views.
-    if (!semanticReady || ratio < 0.48) {
-      return WorkoutBodyCoverage.insufficient;
+      // Push-ups are side-on, so the far side of the body may be hidden.
+      if (exercise == WorkoutExercise.pushUps) {
+        if (!semanticReady) {
+          return WorkoutBodyCoverage.insufficient;
+        }
+
+        return visible >= 7
+            ? WorkoutBodyCoverage.excellent
+            : WorkoutBodyCoverage.good;
+      }
+
+      if (!semanticReady || ratio < 0.48) {
+        return WorkoutBodyCoverage.insufficient;
+      }
+
+      return ratio >= 0.82
+          ? WorkoutBodyCoverage.excellent
+          : WorkoutBodyCoverage.good;
     }
-    return ratio >= 0.82
-        ? WorkoutBodyCoverage.excellent
-        : WorkoutBodyCoverage.good;
-  }
 
   String? _formFeedback(Map<PoseLandmarkType, Offset> points) {
     switch (exercise) {
@@ -1495,6 +1903,50 @@ class WorkoutPoseAnalyzer {
   }
 }
 
+class _PushUpUpdate {
+  const _PushUpUpdate({
+    required this.repCounted,
+    required this.poseValid,
+    required this.exerciseActive,
+    required this.signalsAvailable,
+    required this.ready,
+    required this.debug,
+  });
+
+  final bool repCounted;
+  final bool poseValid;
+  final bool exerciseActive;
+  final bool signalsAvailable;
+  final bool ready;
+  final PushUpDebugData debug;
+}
+
+class _PushUpArmSample {
+  const _PushUpArmSample({
+    required this.right,
+    required this.shoulder,
+    required this.elbow,
+    required this.wrist,
+    required this.shoulderConfidence,
+    required this.elbowConfidence,
+    required this.wristConfidence,
+    required this.angle,
+    required this.score,
+  });
+
+  final bool right;
+  final Offset shoulder;
+  final Offset elbow;
+  final Offset wrist;
+
+  final double shoulderConfidence;
+  final double elbowConfidence;
+  final double wristConfidence;
+
+  final double angle;
+  final double score;
+}
+
 class _PrecisionRepUpdate {
   const _PrecisionRepUpdate({
     required this.repCounted,
@@ -1528,6 +1980,7 @@ class _JumpingJackUpdate {
 class _PoseSample {
   const _PoseSample({
     required this.landmarks,
+    required this.confidences,
     required this.timestamp,
     required this.center,
     required this.bounds,
@@ -1536,8 +1989,9 @@ class _PoseSample {
 
   factory _PoseSample.from(
     Map<PoseLandmarkType, Offset> landmarks,
-    DateTime timestamp,
-  ) {
+    DateTime timestamp, {
+    Map<PoseLandmarkType, double> confidences = const {},
+  }) {
     final torso = <Offset>[];
     for (final type in const [
       PoseLandmarkType.leftShoulder,
@@ -1579,8 +2033,9 @@ class _PoseSample {
       torsoScale,
       math.max(bounds.width, bounds.height) * 0.7,
     );
-    return _PoseSample(
+      return _PoseSample(
       landmarks: landmarks,
+      confidences: confidences,
       timestamp: timestamp,
       center: center,
       bounds: bounds,
@@ -1589,6 +2044,7 @@ class _PoseSample {
   }
 
   final Map<PoseLandmarkType, Offset> landmarks;
+  final Map<PoseLandmarkType, double> confidences;
   final DateTime timestamp;
   final Offset center;
   final Rect bounds;
