@@ -114,7 +114,8 @@ String workoutCameraGuidance(
 ) {
   if (observation == null || !observation.personPresent) {
     return switch (exercise) {
-      WorkoutExercise.pushUps => 'Keep your full side profile in frame',
+    WorkoutExercise.pushUps =>
+    'Keep one shoulder, elbow, and hip visible; your wrist is optional',
       WorkoutExercise.squats =>
         'Keep your shoulders, hips, knees, and ankles in frame',
       WorkoutExercise.sitUps => 'Keep your shoulder, hip, and knee in frame',
@@ -273,8 +274,11 @@ class WorkoutPoseAnalyzer {
   bool? _pushUpSwitchCandidateRight;
   int _pushUpSwitchCandidateFrames = 0;
 
+  final Map<bool, double> _pushUpUpperArmTopBaselines = {};
+  final Map<bool, int> _pushUpUpperArmBaselineSamples = {};
+
   JumpingJackPhase _jumpingJackPhase = JumpingJackPhase.waitingForClosed;
-  
+
   int _jumpingJackConfirmationFrames = 0;
   bool _jumpingJackArmsOpened = false;
   bool _jumpingJackKneesOpened = false;
@@ -306,6 +310,8 @@ class WorkoutPoseAnalyzer {
     _pushUpTrackedRight = null;
     _pushUpSwitchCandidateRight = null;
     _pushUpSwitchCandidateFrames = 0;
+    _pushUpUpperArmTopBaselines.clear();
+    _pushUpUpperArmBaselineSamples.clear();
 
     resetRepPhase();
   }
@@ -368,6 +374,9 @@ class WorkoutPoseAnalyzer {
       return _absent(timestamp: timestamp);
     }
 
+    final minimumLandmarks =
+        exercise == WorkoutExercise.pushUps ? 3 : 4;
+
     Map<PoseLandmarkType, WorkoutLandmark>? best;
     var bestScore = -1.0;
     for (final pose in poses) {
@@ -395,7 +404,7 @@ class WorkoutPoseAnalyzer {
         confidence += landmark.likelihood;
       }
       final score = landmarks.length * 10 + confidence;
-      if (landmarks.length >= 4 && score > bestScore) {
+      if (landmarks.length >= minimumLandmarks && score > bestScore) {
         best = landmarks;
         bestScore = score;
       }
@@ -423,7 +432,10 @@ class WorkoutPoseAnalyzer {
           }
         }
 
-        if (confident.length < 4) {
+        final minimumLandmarks =
+        exercise == WorkoutExercise.pushUps ? 3 : 4;
+
+        if (confident.length < minimumLandmarks) {
           return _absent(timestamp: timestamp);
         }
 
@@ -435,9 +447,10 @@ class WorkoutPoseAnalyzer {
 
         final coverage = _coverage(sample.landmarks);
 
-        final tooClose = switch (exercise) {
-          WorkoutExercise.pushUps =>
-            sample.bounds.width > 0.985 || sample.bounds.height > 0.965,
+          final tooClose = switch (exercise) {
+          // Push-ups are horizontal and often fill a phone frame. If the
+          // useful landmarks remain visible, edge-to-edge framing is fine.
+          WorkoutExercise.pushUps => false,
           WorkoutExercise.jumpingJacks => false,
           _ => sample.bounds.width > 0.88 || sample.bounds.height > 0.94,
         };
@@ -625,9 +638,18 @@ class WorkoutPoseAnalyzer {
   double get _flexedElbowThreshold => _lerp(92, 105, sensitivity);
   double get _lungeThreshold => _lerp(105, 118, sensitivity);
 
-     double get _pushUpTopThreshold => _lerp(148, 142, sensitivity);
+  double get _pushUpTopThreshold => _lerp(148, 142, sensitivity);
 
   double get _pushUpBottomThreshold => _lerp(122, 132, sensitivity);
+
+  double get _pushUpFallbackInitialTopAngle =>
+      _lerp(72, 62, sensitivity);
+
+  double get _pushUpFallbackTopTolerance =>
+      _lerp(10, 16, sensitivity);
+
+  double get _pushUpFallbackBottomDelta =>
+      _lerp(32, 22, sensitivity);
 
   PushUpTrackedSide get _pushUpTrackedSide => switch (_pushUpTrackedRight) {
     true => PushUpTrackedSide.right,
@@ -662,7 +684,17 @@ class WorkoutPoseAnalyzer {
                   : PoseLandmarkType.leftHip] ??
               hipCenter;
 
-    final signalsAvailable = selectedArm != null && selectedHip != null;
+       // Fallback signal when the wrist leaves a small phone frame:
+    // angle between torso direction (hip -> shoulder) and upper arm
+    // (shoulder -> elbow). This needs no head, wrist, knee, or far-side arm.
+    final upperArmAngle = selectedArm == null || selectedHip == null
+        ? null
+        : _angle(selectedHip, selectedArm.shoulder, selectedArm.elbow);
+
+    final signalsAvailable =
+        selectedArm != null &&
+        selectedHip != null &&
+        (selectedArm.angle != null || upperArmAngle != null);
 
     var torsoHorizontal = false;
 
@@ -723,11 +755,51 @@ class WorkoutPoseAnalyzer {
       );
     }
 
-    final activeArm = selectedArm;
+       final activeArm = selectedArm;
     final elbowAngle = activeArm.angle;
 
-    final topCandidate = elbowAngle >= topThreshold;
-    final bottomCandidate = elbowAngle <= bottomThreshold;
+    final fallbackBaseline =
+        _pushUpUpperArmTopBaselines[activeArm.right];
+
+    final fallbackSamples =
+        _pushUpUpperArmBaselineSamples[activeArm.right] ?? 0;
+
+    // Prefer the normal shoulder-elbow-wrist angle whenever the wrist is
+    // visible. The fallback is only used when the wrist leaves the frame.
+    late final bool topCandidate;
+    late final bool bottomCandidate;
+
+    if (elbowAngle != null) {
+      topCandidate = elbowAngle >= topThreshold;
+      bottomCandidate = elbowAngle <= bottomThreshold;
+    } else if (upperArmAngle != null) {
+      if (fallbackBaseline != null && fallbackSamples >= 2) {
+        final fallbackDelta =
+            (upperArmAngle - fallbackBaseline).abs();
+
+        topCandidate =
+            fallbackDelta <= _pushUpFallbackTopTolerance;
+
+        bottomCandidate =
+            fallbackDelta >= _pushUpFallbackBottomDelta;
+      } else {
+        // Allows setup even if the wrist begins outside the frame.
+        topCandidate =
+            upperArmAngle >= _pushUpFallbackInitialTopAngle;
+
+        bottomCandidate = false;
+      }
+    } else {
+      topCandidate = false;
+      bottomCandidate = false;
+    }
+
+    if (topCandidate && upperArmAngle != null) {
+      _recordPushUpUpperArmTopBaseline(
+        activeArm.right,
+        upperArmAngle,
+      );
+    }
 
     final previousPhase = _pushUpPhase;
 
@@ -829,7 +901,7 @@ class WorkoutPoseAnalyzer {
     );
   }
 
-  _PushUpArmSample? _pushUpArm(
+    _PushUpArmSample? _pushUpArm(
     Map<PoseLandmarkType, Offset> points,
     Map<PoseLandmarkType, double> confidences, {
     required bool right,
@@ -850,21 +922,29 @@ class WorkoutPoseAnalyzer {
     final elbow = points[elbowType];
     final wrist = points[wristType];
 
-    if (shoulder == null || elbow == null || wrist == null) {
+    // Wrist is optional. Shoulder + elbow are enough to keep the arm alive
+    // so the upper-arm fallback can continue the repetition.
+    if (shoulder == null || elbow == null) {
       return null;
     }
 
     final shoulderConfidence = confidences[shoulderType] ?? 1;
     final elbowConfidence = confidences[elbowType] ?? 1;
-    final wristConfidence = confidences[wristType] ?? 1;
 
-    final weakestConfidence = math.min(
-      shoulderConfidence,
-      math.min(elbowConfidence, wristConfidence),
-    );
+    final wristConfidence =
+        wrist == null ? null : (confidences[wristType] ?? 1);
 
-    final averageConfidence =
-        (shoulderConfidence + elbowConfidence + wristConfidence) / 3;
+    final weakestCoreConfidence =
+        math.min(shoulderConfidence, elbowConfidence);
+
+    final averageCoreConfidence =
+        (shoulderConfidence + elbowConfidence) / 2;
+
+    final score =
+        weakestCoreConfidence * 0.60 +
+        averageCoreConfidence * 0.30 +
+        (wristConfidence ?? 0) * 0.10 +
+        (wrist == null ? 0.0 : 0.12);
 
     return _PushUpArmSample(
       right: right,
@@ -874,8 +954,10 @@ class WorkoutPoseAnalyzer {
       shoulderConfidence: shoulderConfidence,
       elbowConfidence: elbowConfidence,
       wristConfidence: wristConfidence,
-      angle: _angle(shoulder, elbow, wrist),
-      score: weakestConfidence * 0.70 + averageConfidence * 0.30,
+      angle: wrist == null
+          ? null
+          : _angle(shoulder, elbow, wrist),
+      score: score,
     );
   }
 
@@ -889,12 +971,22 @@ class WorkoutPoseAnalyzer {
       null => null,
     };
 
-    if (tracked == null) {
-      final replacement = left == null
-          ? right
-          : right == null
-          ? left
-          : (right.score > left.score ? right : left);
+      if (tracked == null) {
+      _PushUpArmSample? replacement;
+
+      // Prefer a complete wrist-visible arm when possible, while still
+      // allowing shoulder/elbow fallback arms.
+      if (left?.hasWrist == true && right?.hasWrist != true) {
+        replacement = left;
+      } else if (right?.hasWrist == true && left?.hasWrist != true) {
+        replacement = right;
+      } else if (left == null) {
+        replacement = right;
+      } else if (right == null) {
+        replacement = left;
+      } else {
+        replacement = right.score > left.score ? right : left;
+      }
 
       if (replacement != null) {
         _pushUpTrackedRight = replacement.right;
@@ -934,6 +1026,28 @@ class WorkoutPoseAnalyzer {
     }
 
     return tracked;
+  }
+
+    void _recordPushUpUpperArmTopBaseline(
+    bool right,
+    double angle,
+  ) {
+    final previous = _pushUpUpperArmTopBaselines[right];
+    final samples = _pushUpUpperArmBaselineSamples[right] ?? 0;
+
+    if (previous == null) {
+      _pushUpUpperArmTopBaselines[right] = angle;
+      _pushUpUpperArmBaselineSamples[right] = 1;
+      return;
+    }
+
+    // Update slowly so camera/landmark jitter does not constantly move
+    // the user's learned top position.
+    _pushUpUpperArmTopBaselines[right] =
+        previous * 0.82 + angle * 0.18;
+
+    _pushUpUpperArmBaselineSamples[right] =
+        math.min(samples + 1, 20);
   }
 
   double? _pushUpBodyAlignment(
@@ -1358,21 +1472,15 @@ class WorkoutPoseAnalyzer {
     final visible = required.where(points.containsKey).length;
     final ratio = visible / required.length;
     final semanticReady = switch (exercise) {
-          WorkoutExercise.pushUps =>
+        WorkoutExercise.pushUps =>
         (_completeSide(points, const [
               PoseLandmarkType.leftShoulder,
               PoseLandmarkType.leftElbow,
-              PoseLandmarkType.leftWrist,
             ]) ||
             _completeSide(points, const [
               PoseLandmarkType.rightShoulder,
               PoseLandmarkType.rightElbow,
-              PoseLandmarkType.rightWrist,
             ])) &&
-        _hasAny(points, const [
-          PoseLandmarkType.leftShoulder,
-          PoseLandmarkType.rightShoulder,
-        ]) &&
         _hasAny(points, const [
           PoseLandmarkType.leftHip,
           PoseLandmarkType.rightHip,
@@ -1414,9 +1522,9 @@ class WorkoutPoseAnalyzer {
           return WorkoutBodyCoverage.insufficient;
         }
 
-        return visible >= 7
-            ? WorkoutBodyCoverage.excellent
-            : WorkoutBodyCoverage.good;
+            return visible >= 5
+          ? WorkoutBodyCoverage.excellent
+          : WorkoutBodyCoverage.good;
       }
 
       if (!semanticReady || ratio < 0.48) {
@@ -1817,17 +1925,13 @@ class WorkoutPoseAnalyzer {
 
   static List<PoseLandmarkType> _requiredLandmarks(WorkoutExercise exercise) {
     return switch (exercise) {
-      WorkoutExercise.pushUps => const [
+        WorkoutExercise.pushUps => const [
         PoseLandmarkType.leftShoulder,
         PoseLandmarkType.rightShoulder,
         PoseLandmarkType.leftElbow,
         PoseLandmarkType.rightElbow,
-        PoseLandmarkType.leftWrist,
-        PoseLandmarkType.rightWrist,
         PoseLandmarkType.leftHip,
         PoseLandmarkType.rightHip,
-        PoseLandmarkType.leftKnee,
-        PoseLandmarkType.rightKnee,
       ],
       WorkoutExercise.jumpingJacks => const [
         PoseLandmarkType.leftShoulder,
@@ -1937,14 +2041,16 @@ class _PushUpArmSample {
   final bool right;
   final Offset shoulder;
   final Offset elbow;
-  final Offset wrist;
+  final Offset? wrist;
 
   final double shoulderConfidence;
   final double elbowConfidence;
-  final double wristConfidence;
+  final double? wristConfidence;
 
-  final double angle;
+  final double? angle;
   final double score;
+
+  bool get hasWrist => wrist != null && angle != null;
 }
 
 class _PrecisionRepUpdate {
