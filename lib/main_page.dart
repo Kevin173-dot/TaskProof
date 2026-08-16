@@ -1695,12 +1695,11 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   ObjectDetector? _objectLocator;
 
-  final ObjectRecognitionService _objectRecognition =
-      ObjectRecognitionService(
-        analysisInterval: const Duration(milliseconds: 450),
-        hitConfirmationFrames: 2,
-      );
-
+final ObjectRecognitionService _objectRecognition =
+    ObjectRecognitionService(
+      analysisInterval: const Duration(milliseconds: 450),
+      hitConfirmationFrames: 3,
+    );
   Timer? _timer;
 
   late final AnimationController _recheckFlashController;
@@ -1710,6 +1709,9 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
   late final VerificationThresholds _thresholds;
 
   static const Color _verifiedGreen = Color(0xFF22C55E);
+
+  static const double _objectInitialMatchConfidence = 0.84;
+  static const double _objectOngoingMatchConfidence = 0.80;
 
   bool _cameraInitializing = true;
 
@@ -1768,6 +1770,63 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   DateTime? _objectMonitoringStartedAt;
 
+  bool get _requiredObjectsVerifiedNow {
+    if (!widget.task.objectInFrame) {
+      return true;
+    }
+
+    if (!_objectProfilesReady ||
+        _requiredObjects.isEmpty) {
+      return false;
+    }
+
+    final now = DateTime.now();
+
+    return _requiredObjects.every(
+      (object) {
+        if (!object.available) {
+          return false;
+        }
+
+        final lastMatchedAt =
+            object.lastMatchedAt;
+
+        if (lastMatchedAt == null) {
+          return false;
+        }
+
+        return now.difference(
+              lastMatchedAt,
+            ) <
+            _objectMissingGrace;
+      },
+    );
+  }
+
+  String get _requiredObjectPrompt {
+    if (!_objectProfilesReady) {
+      return 'Loading required object...';
+    }
+
+    if (_requiredObjects.isEmpty) {
+      return 'Required object is unavailable';
+    }
+
+    if (_requiredObjects.length == 1) {
+      return 'Show ${_requiredObjects.first.name} in frame';
+    }
+
+    return 'Show required objects in frame';
+  }
+
+  String get _requiredObjectVerifiedLabel {
+    if (_requiredObjects.length == 1) {
+      return '${_requiredObjects.first.name} verified';
+    }
+
+    return 'Required objects verified';
+  }
+
   DateTime _lastAlarm = DateTime.fromMillisecondsSinceEpoch(0);
 
   static const Duration _faceAnalysisInterval =
@@ -1780,7 +1839,6 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
     // Focus requires a stronger visual match so random background regions
     // are less likely to be accepted as the saved object.
-    static const double _focusObjectMinimumConfidence = 0.82;
   // ===========================================================
   // INIT
   // ===========================================================
@@ -2115,13 +2173,17 @@ Future<void> _loadRequiredObjects() async {
           widget.task,
         );
 
-        _objectMonitoringStartedAt ??=
-            DateTime.now();
 
-        _status =
-            'Actively verifying';
+      _objectMonitoringStartedAt ??=
+          DateTime.now();
 
-        _hasBeenMonitoring = true;
+      _status =
+          widget.task.objectInFrame
+              ? _requiredObjectPrompt
+              : 'Actively verifying';
+
+      _hasBeenMonitoring = true;
+
       }
     });
   } on CameraException catch (error) {
@@ -2322,47 +2384,78 @@ Future<void> _loadRequiredObjects() async {
   }
 
   // =====================================================
-  // STRICT FOCUS OBJECT VERIFICATION
+  // FOCUS OBJECT VERIFICATION
   // =====================================================
   //
-  // If ML Kit cannot even locate an object in the frame,
-  // DO NOT let the visual matcher search the whole image.
+  // ML Kit localization is used when it can identify useful
+  // object regions.
   //
-  // The previous version allowed its fallback matcher to
-  // search the background, which could create false matches.
-  // By not refreshing lastMatchedAt here, the required object
-  // naturally becomes "missing" after _objectMissingGrace.
+  // However, small, flat, partially hidden, or unusual objects
+  // such as a mouse may not always receive an ML Kit bounding
+  // box.
+  //
+  // ObjectRecognitionService already contains its own
+  // multi-scale fallback search. Therefore always run the
+  // visual matcher.
+  //
+  // If detectedBounds is empty, the recognition service will
+  // automatically search appropriate regions of the frame.
   // =====================================================
 
-  if (detectedBounds.isNotEmpty) {
-    final matches =
-        await _objectRecognition.analyzeSnapshot(
-      objectSnapshot,
-      detectedBounds: detectedBounds,
+  final matches =
+      await _objectRecognition.analyzeSnapshot(
+    objectSnapshot,
+    detectedBounds: detectedBounds,
+  );
+
+  final matchesById = {
+    for (final match in matches)
+      match.id: match,
+  };
+
+  final checkedAt = DateTime.now();
+
+  for (final object in _requiredObjects) {
+    final match = matchesById[object.id];
+
+    if (match == null) {
+      continue;
+    }
+
+    final previousMatch =
+        object.lastMatchedAt;
+
+    final currentlyVerified =
+        previousMatch != null &&
+        checkedAt.difference(
+              previousMatch,
+            ) <
+            _objectMissingGrace;
+
+    final minimumConfidence =
+        currentlyVerified
+            ? _objectOngoingMatchConfidence
+            : _objectInitialMatchConfidence;
+
+    final strongMatch =
+        match.isMatch &&
+        !match.isTemporarilyMissing &&
+        match.confidence >=
+            minimumConfidence;
+
+    debugPrint(
+      'Focus object "${object.name}" '
+      'confidence=${match.confidence.toStringAsFixed(3)} '
+      'match=${match.isMatch} '
+      'required=${minimumConfidence.toStringAsFixed(2)}',
     );
 
-    final matchesById = {
-      for (final match in matches) match.id: match,
-    };
-
-    final checkedAt = DateTime.now();
-
-    for (final object in _requiredObjects) {
-      final match = matchesById[object.id];
-
-      if (match == null) {
-        continue;
-      }
-
-      final strongMatch =
-          match.isMatch &&
-          !match.isTemporarilyMissing &&
-          match.confidence >= _focusObjectMinimumConfidence;
-
-      if (strongMatch) {
-        object.lastMatchedAt = checkedAt;
-      }
+    if (strongMatch) {
+      object.lastMatchedAt =
+          checkedAt;
     }
+
+
   }
 }
 
@@ -2734,13 +2827,29 @@ void _resetFidgetTracking() {
 
     _violationStartedAt = null;
 
-    // Already verified.
-    if (!_warningActive) {
+    // Do NOT call the session verified until every
+    // required object has actually been recognized.
+    if (widget.task.objectInFrame &&
+        !_requiredObjectsVerifiedNow) {
       _warningReason = null;
-      _status = 'Actively verifying';
+      _status =
+          _requiredObjectPrompt;
 
       return;
     }
+
+    // Already verified.
+    if (!_warningActive) {
+      _warningReason = null;
+
+      _status =
+          widget.task.objectInFrame
+              ? _requiredObjectVerifiedLabel
+              : 'Actively verifying';
+
+      return;
+    }
+
 
     // They just returned after being out of position.
     // Begin flashing RED <-> WHITE.
@@ -3225,13 +3334,20 @@ void _sessionTick() {
         _C.red;
   }
 
-  // Person is outside the reference position.
   if (_warningActive &&
       !_isRechecking) {
     return _C.red;
   }
 
-  // Everything is correct.
+  // Required object has NOT actually been
+  // confirmed yet. Never show green here.
+  if (widget.task.objectInFrame &&
+      !_requiredObjectsVerifiedNow) {
+    return const Color(
+      0xFFFFB72E,
+    );
+  }
+
   return _verifiedGreen;
 }
 
@@ -3253,6 +3369,15 @@ String _verificationLabel(
   if (_warningActive &&
       !_isRechecking) {
     return 'Focus interrupted';
+  }
+
+  if (widget.task.objectInFrame &&
+      !_requiredObjectsVerifiedNow) {
+    return _requiredObjectPrompt;
+  }
+
+  if (widget.task.objectInFrame) {
+    return _requiredObjectVerifiedLabel;
   }
 
   return 'Actively Verifying';

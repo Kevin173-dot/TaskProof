@@ -864,15 +864,26 @@ List<_RawObjectScore> _matchRawCameraFrame(
   final localizedRegions = request.localizedRegions;
 
   if (localizedRegions.isEmpty) {
-    final regions = <_Region>[
-      _Region(0, 0, raster.width.toDouble(), raster.height.toDouble()),
-      ..._fallbackCandidateRegions(
-        raster.width,
-        raster.height,
-        localizationAvailable: false,
+    // ML Kit did not provide an object box.
+    //
+    // Search multiple smaller candidate regions instead of
+    // comparing the saved object against the ENTIRE scene.
+    //
+    // This is especially important for small objects such as
+    // computer mice, phones, pencils, remotes, etc.
+    final regions = _fallbackCandidateRegions(
+      raster.width,
+      raster.height,
+      localizationAvailable: false,
+    );
+
+    return _scoreProfiles(
+      profiles,
+      _describeRegions(
+        raster,
+        regions,
       ),
-    ];
-    return _scoreProfiles(profiles, _describeRegions(raster, regions));
+    );
   }
 
   // Try the native detector's tight boxes first. In the usual case where all
