@@ -48,7 +48,12 @@ enum TaskIconType {
 // TASK STATUS
 // =============================================================
 
-enum TaskStatus { ready, scheduled, live, completed }
+enum TaskStatus {
+  ready,
+  scheduled,
+  live,
+  completed,
+}
 
 enum TaskMode { focus, active, workout }
 
@@ -1325,7 +1330,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   TaskMode selectedMode = TaskMode.focus;
 
-  FocusActivity focusActivity = FocusActivity.general;
+FocusActivity focusActivity = FocusActivity.general;
 
 // ACTIVE
 ActivityLevel activityLevel = ActivityLevel.moderate;
@@ -1747,6 +1752,10 @@ Widget _buildFocusSetup() {
 
           setState(() {
             focusActivity = value;
+
+            // Different activities can have completely different
+            // natural head/body positions.
+            referencePose = null;
           });
         },
       ),
@@ -2962,22 +2971,22 @@ Widget _buildFocusSetup() {
   // ===========================================================
 
   String get _referenceDescription {
-    if (stayInPosition) {
-      if (referencePose != null) {
-        return 'Your reference pose has been captured. Tap it to retake.';
-      }
-
-      return 'Capture the position you want TaskProof to enforce.';
+  if (stayInPosition) {
+    if (referencePose != null) {
+      return 'Your focus position has been calibrated. Tap it to recalibrate.';
     }
 
-    if (objectInFrame) {
-      return 'Scan or select the objects that must remain visible.';
-    }
-
-    return 'Select a verification rule first.';
+    return 'Choose a calibration delay, return to your task, and TaskProof will learn your natural working position.';
   }
 
-  Widget _buildReferenceSetup() {
+  if (objectInFrame) {
+    return 'Scan or select the objects that must remain visible.';
+  }
+
+  return 'Select a verification rule first.';
+}
+
+Widget _buildReferenceSetup() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(13),
@@ -2997,8 +3006,8 @@ Widget _buildFocusSetup() {
                   : Icons.photo_camera_outlined,
               title: 'Reference Position',
               subtitle: referencePose != null
-                  ? 'Captured — tap to retake'
-                  : 'Capture your normal body and head position.',
+              ? 'Calibrated — tap to recalibrate'
+              : 'Set a delay and let TaskProof learn your natural position.',
               complete: referencePose != null,
               dark: widget.isDarkMode,
               onTap: _captureReferencePosition,
@@ -3037,34 +3046,36 @@ Widget _buildFocusSetup() {
   // ===========================================================
 
   Future<void> _captureReferencePosition() async {
-    if (!MlKitCameraImageConverter.supported) {
-      _showMessage(
-        'Position verification must be tested on an Android or iPhone device, not Chrome.',
-      );
-
-      return;
-    }
-
-    final result = await Navigator.push<PoseReference>(
-      context,
-      MaterialPageRoute(
-        builder: (context) =>
-            ReferencePositionPage(isDarkMode: widget.isDarkMode),
-      ),
+  if (!MlKitCameraImageConverter.supported) {
+    _showMessage(
+      'Position verification must be tested on an Android or iPhone device, not Chrome.',
     );
 
-    if (result == null || !mounted) {
-      return;
-    }
-
-    setState(() {
-      referencePose = result;
-    });
-
-    _showMessage('Reference position captured.');
+    return;
   }
 
+  final result = await Navigator.push<PoseReference>(
+    context,
+    MaterialPageRoute(
+      builder: (context) => ReferencePositionPage(
+        isDarkMode: widget.isDarkMode,
+        focusActivity: focusActivity,
+      ),
+    ),
+  );
 
+  if (result == null || !mounted) {
+    return;
+  }
+
+  setState(() {
+    referencePose = result;
+  });
+
+  _showMessage(
+    'Reference position calibrated.',
+  );
+}
 
   // ===========================================================
   // ALARM
@@ -3584,133 +3595,164 @@ Widget _buildFocusSetup() {
   // ===========================================================
 
   Widget _buildSensitivity() {
-    const sensitivityRed = Color(0xFFFF111C);
-    const sensitivityOrange = Color(0xFFFF8A00);
+  const sensitivityRed = Color(0xFFFF111C);
+  const sensitivityOrange = Color(0xFFFF8A00);
 
-    return ValueListenableBuilder<double>(
-      valueListenable: _sensitivityValue,
-      builder: (context, value, child) {
-        final thumbColor =
-            Color.lerp(
-              sensitivityRed,
-              sensitivityOrange,
-              value,
-            ) ??
-            sensitivityRed;
+  return ValueListenableBuilder<double>(
+    valueListenable: _sensitivityValue,
+    builder: (context, value, child) {
+      final thumbColor =
+          Color.lerp(
+            sensitivityRed,
+            sensitivityOrange,
+            value,
+          ) ??
+          sensitivityRed;
 
-        return Column(
-          children: [
-            SizedBox(
-              height: 48,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Positioned(
-                    left: 24,
-                    right: 24,
-                    child: Container(
-                      height: 5,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        gradient: const LinearGradient(
-                          begin: Alignment.centerLeft,
-                          end: Alignment.centerRight,
-                          colors: [
-                            sensitivityRed,
-                            sensitivityOrange,
-                          ],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: widget.isDarkMode
-                                ? Colors.black.withValues(alpha: .24)
-                                : Colors.black.withValues(alpha: .08),
-                            blurRadius: 5,
-                            offset: const Offset(0, 1),
-                          ),
+      return Column(
+        children: [
+          SizedBox(
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  child: Container(
+                    height: 5,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      gradient: const LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          sensitivityRed,
+                          sensitivityOrange,
                         ],
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: widget.isDarkMode
+                              ? Colors.black.withValues(
+                                  alpha: .24,
+                                )
+                              : Colors.black.withValues(
+                                  alpha: .08,
+                                ),
+                          blurRadius: 5,
+                          offset: const Offset(
+                            0,
+                            1,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 5,
-
-                      // The actual Flutter track is transparent.
-                      // Our gradient underneath becomes the visible track.
-                      activeTrackColor: Colors.transparent,
-                      inactiveTrackColor: Colors.transparent,
-
-                      thumbColor: thumbColor,
-
-                      overlayColor: thumbColor.withValues(
-                        alpha: .14,
-                      ),
-
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 9,
-                      ),
-
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 18,
-                      ),
-                    ),
-                    child: Slider(
-                      value: value,
-                      min: 0,
-                      max: 1,
-                      onChanged: (nextValue) {
-                        sensitivity = nextValue;
-                        _sensitivityValue.value = nextValue;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 3),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Low',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  Text(
-                    'Medium',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  Text(
-                    'High',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 6),
-
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _sensitivityDescription,
-                style: TextStyle(
-                  color: widget.isDarkMode
-                      ? _T.muted
-                      : const Color(0xFF676A74),
-                  fontSize: 12,
-                  height: 1.35,
                 ),
+
+                SliderTheme(
+                  data: SliderTheme.of(
+                    context,
+                  ).copyWith(
+                    trackHeight: 5,
+
+                    activeTrackColor:
+                        Colors.transparent,
+
+                    inactiveTrackColor:
+                        Colors.transparent,
+
+                    thumbColor: thumbColor,
+
+                    overlayColor:
+                        thumbColor.withValues(
+                      alpha: .14,
+                    ),
+
+                    thumbShape:
+                        const RoundSliderThumbShape(
+                      enabledThumbRadius: 9,
+                    ),
+
+                    overlayShape:
+                        const RoundSliderOverlayShape(
+                      overlayRadius: 18,
+                    ),
+                  ),
+                  child: Slider(
+                    value: value,
+                    min: 0,
+                    max: 1,
+                    onChanged: (
+                      nextValue,
+                    ) {
+                      sensitivity =
+                          nextValue;
+
+                      _sensitivityValue.value =
+                          nextValue;
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: 3,
+            ),
+            child: Row(
+              mainAxisAlignment:
+                  MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Low',
+                  style: TextStyle(
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  'Medium',
+                  style: TextStyle(
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  'High',
+                  style: TextStyle(
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(
+            height: 6,
+          ),
+
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _sensitivityDescription,
+              style: TextStyle(
+                color: widget.isDarkMode
+                    ? _T.muted
+                    : const Color(
+                        0xFF676A74,
+                      ),
+                fontSize: 12,
+                height: 1.35,
               ),
             ),
-          ],
-        );
-      },
-    );
-  }
+          ),
+        ],
+      );
+    },
+  );
+}
 
   String get _sensitivityDescription {
   if (selectedMode == TaskMode.active) {
@@ -3924,17 +3966,29 @@ Widget _buildFocusSetup() {
   }
 }
 
-// =============================================================
-// REFERENCE POSITION CAMERA PAGE
-// =============================================================
+  // =============================================================
+  // REFERENCE POSITION CAMERA PAGE
+  // =============================================================
+
+  enum _ReferenceCalibrationMode {
+    quick,
+    countdown,
+  }
 
 class ReferencePositionPage extends StatefulWidget {
-  const ReferencePositionPage({super.key, required this.isDarkMode});
+  const ReferencePositionPage({
+    super.key,
+    required this.isDarkMode,
+    required this.focusActivity,
+  });
 
   final bool isDarkMode;
 
+  final FocusActivity focusActivity;
+
   @override
-  State<ReferencePositionPage> createState() => _ReferencePositionPageState();
+  State<ReferencePositionPage> createState() =>
+      _ReferencePositionPageState();
 }
 
 class _ReferencePositionPageState extends State<ReferencePositionPage>
@@ -3971,16 +4025,37 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
 
   DateTime _lastFaceProcessed = DateTime.fromMillisecondsSinceEpoch(0);
 
-  List<Face> _cachedFaces = const [];
+ List<Face> _cachedFaces = const [];
 
 
-  PoseReference? _adaptiveReference;
+final List<PoseReference> _recentCalibrationSamples =
+    <PoseReference>[];
 
-  final List<PoseReference> _recentCalibrationSamples =
-      <PoseReference>[];
+final ValueNotifier<bool> _positionDetected =
+    ValueNotifier(false);
 
-  final ValueNotifier<bool> _positionDetected =
-      ValueNotifier(false);
+// ===========================================================
+// CALIBRATION TIMING
+// ===========================================================
+
+  _ReferenceCalibrationMode _calibrationMode =
+      _ReferenceCalibrationMode.quick;
+
+  // Used when Countdown is selected.
+  int _customCountdownSeconds = 10;
+
+  Timer? _calibrationCountdownTimer;
+
+  // Example: 3 → 2 → 1.
+  // Null means no countdown is currently running.
+  int? _countdownRemaining;
+
+  // We ONLY collect reference samples after the countdown.
+  bool _collectingCalibration = false;
+
+  bool get _calibrationInProgress =>
+      _countdownRemaining != null ||
+      _collectingCalibration;
 
   String _status = 'Preparing camera...';
 
@@ -4005,6 +4080,9 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
     _lifecycleActive = false;
     _acceptFrames = false;
 
+    _calibrationCountdownTimer?.cancel();
+    _calibrationCountdownTimer = null;
+
     unawaited(_shutdown());
 
     _positionDetected.dispose();
@@ -4015,13 +4093,18 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      _lifecycleActive = false;
-      _acceptFrames = false;
-      _setCurrentPose(null);
-      unawaited(_disposeCamera());
-      return;
-    }
+    state == AppLifecycleState.inactive) {
+    _lifecycleActive = false;
+    _acceptFrames = false;
+
+    _cancelCalibration(silent: true);
+
+    _setCurrentPose(null);
+
+    unawaited(_disposeCamera());
+
+    return;
+  }
 
     if (state == AppLifecycleState.resumed) {
       _lifecycleActive = true;
@@ -4139,7 +4222,8 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
       setState(() {
         _initializing = false;
 
-        _status = 'Sit or stand in the position you want TaskProof to enforce.';
+        _status =
+        'Position the phone, then choose how long you need before calibration begins.';
       });
     } on CameraException catch (error) {
       await _disposeCamera();
@@ -4324,218 +4408,1010 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
     }
   }
 
-  void _setCurrentPose(PoseReference? snapshot) {
+String get _calibrationActivityInstruction {
+  return switch (widget.focusActivity) {
+    FocusActivity.general =>
+      'Use your normal focus position and continue naturally.',
 
-  if (snapshot == null) {
-    _recentCalibrationSamples.clear();
-    _adaptiveReference = null;
+    FocusActivity.reading =>
+      'Look naturally at your book or reading material.',
+
+    FocusActivity.writingNotes =>
+      'Return to your normal writing position and look at your notes.',
+
+    FocusActivity.computerWork =>
+      'Look naturally at your computer and continue as if you were working.',
+  };
+}
+
+String get _countdownInstruction {
+  return switch (widget.focusActivity) {
+    FocusActivity.general =>
+      'Return to your normal focus position.',
+
+    FocusActivity.reading =>
+      'Return to your reading position and look at your reading material.',
+
+    FocusActivity.writingNotes =>
+      'Return to your writing position and look at your notes.',
+
+    FocusActivity.computerWork =>
+      'Return to your computer and look at the screen naturally.',
+  };
+}
+
+void _startCalibration() {
+  final controller = _controller;
+
+  if (_disposed ||
+      _initializing ||
+      controller == null ||
+      !controller.value.isInitialized ||
+      _calibrationInProgress) {
+    return;
+  }
+
+  _calibrationCountdownTimer?.cancel();
+
+  _recentCalibrationSamples.clear();
+
+  final delaySeconds =
+      _calibrationMode == _ReferenceCalibrationMode.quick
+          ? 3
+          : _customCountdownSeconds;
+
+  setState(() {
+    _collectingCalibration = false;
+    _countdownRemaining = delaySeconds;
 
     _status =
-        'Make sure enough of your body is visible to learn your focus position.';
+        '$_countdownInstruction Calibration begins in $delaySeconds seconds.';
+  });
 
-    if (_positionDetected.value) {
-      _positionDetected.value = false;
+  _calibrationCountdownTimer =
+      Timer.periodic(
+    const Duration(seconds: 1),
+    (timer) {
+      if (!mounted || _disposed) {
+        timer.cancel();
+        return;
+      }
+
+      final current =
+          _countdownRemaining;
+
+      if (current == null) {
+        timer.cancel();
+        return;
+      }
+
+      final next = current - 1;
+
+      if (next <= 0) {
+        timer.cancel();
+
+        _calibrationCountdownTimer = null;
+
+        // Anything detected while the user was tapping
+        // or returning to their task is intentionally discarded.
+        _recentCalibrationSamples.clear();
+
+        setState(() {
+          _countdownRemaining = null;
+          _collectingCalibration = true;
+
+          _status =
+              'Calibrating... $_calibrationActivityInstruction';
+        });
+
+        return;
+      }
+
+      setState(() {
+        _countdownRemaining = next;
+
+        _status =
+            '$_countdownInstruction Calibration begins in $next seconds.';
+      });
+    },
+  );
+}
+
+void _cancelCalibration({
+  bool silent = false,
+}) {
+  _calibrationCountdownTimer?.cancel();
+  _calibrationCountdownTimer = null;
+
+  _countdownRemaining = null;
+  _collectingCalibration = false;
+
+  _recentCalibrationSamples.clear();
+
+  if (!silent &&
+      mounted &&
+      !_disposed) {
+    setState(() {
+      _status =
+          'Calibration cancelled. Choose when you are ready.';
+    });
+  }
+}
+
+void _finishCalibration(
+  PoseReference reference,
+) {
+  if (!mounted ||
+      _disposed ||
+      !_collectingCalibration) {
+    return;
+  }
+
+  // Prevent another camera frame from completing it twice.
+  _collectingCalibration = false;
+
+  _calibrationCountdownTimer?.cancel();
+  _calibrationCountdownTimer = null;
+
+
+  Navigator.pop(context, reference);
+}
+
+void _setCurrentPose(
+  PoseReference? snapshot,
+) {
+  final personVisible =
+      snapshot != null;
+
+  if (_positionDetected.value !=
+      personVisible) {
+    _positionDetected.value =
+        personVisible;
+  }
+
+  // =========================================================
+  // NOT CALIBRATING
+  // =========================================================
+
+  if (!_collectingCalibration) {
+    // During the countdown, keep the countdown
+    // instruction on screen instead of replacing it
+    // with "Position visible".
+    if (_countdownRemaining != null) {
+      return;
     }
+
+    _status = personVisible
+        ? 'Position visible. Choose a calibration option below.'
+        : 'Move into view so TaskProof can see your position.';
 
     return;
   }
 
-  _recentCalibrationSamples.add(snapshot);
+  // =========================================================
+  // CALIBRATION IS ACTIVE
+  // =========================================================
 
-  // Keep a small rolling window only.
-  if (_recentCalibrationSamples.length > 8) {
-    _recentCalibrationSamples.removeAt(0);
+  if (snapshot == null) {
+    // Calibration should use one continuous period
+    // where the person's pose can be reliably seen.
+    //
+    // If they disappear, throw away the incomplete
+    // samples and automatically begin again once
+    // they are visible.
+    _recentCalibrationSamples.clear();
+
+
+    _status =
+        'Position lost. Move back into view — calibration will restart automatically.';
+
+    return;
   }
 
-  _adaptiveReference =
-      TaskPoseAnalyzer.buildAdaptiveReference(
+  _recentCalibrationSamples.add(
+    snapshot,
+  );
+
+  // Camera pose analysis is currently approximately
+  // once every 250 ms.
+  //
+  // 8 samples therefore represents roughly
+  // 2 seconds of natural working position.
+  if (_recentCalibrationSamples.length >
+      8) {
+    _recentCalibrationSamples.removeAt(
+      0,
+    );
+  }
+
+  // Do not create the final reference until
+  // we have the full calibration window.
+  if (_recentCalibrationSamples.length <
+      8) {
+    return;
+  }
+
+  final reference =
+      TaskPoseAnalyzer
+          .buildAdaptiveReference(
     _recentCalibrationSamples,
   );
 
-  final detected = _adaptiveReference != null;
-
-  _status = detected
-      ? 'Focus area learned. Ready to capture.'
-      : 'Hold your normal working position for a moment...';
-
-  if (_positionDetected.value != detected) {
-    _positionDetected.value = detected;
+  if (reference == null) {
+    // The reference was not stable enough yet.
+    // Keep receiving new frames until TaskProof
+    // gets a usable 8-frame window.
+    return;
   }
+
+
+  _finishCalibration(
+    reference,
+  );
 }
+
 
   // ===========================================================
   // BUILD
   // ===========================================================
 
   @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _positionDetected,
-      builder: (context, positionDetected, child) {
-        return Scaffold(
-          backgroundColor: const Color(0xFF07090D),
-          body: SafeArea(
-            child: Column(
-              children: [
-                // =================================================
-                // HEADER
-                // =================================================
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 5, 16, 4),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                        },
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
+Widget build(BuildContext context) {
+  return ValueListenableBuilder<bool>(
+    valueListenable: _positionDetected,
+    builder: (
+      context,
+      positionDetected,
+      child,
+    ) {
+      return Scaffold(
+        backgroundColor:
+            const Color(0xFF07090D),
 
-                      const Text(
-                        'Capture Position',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 21,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              // =================================================
+              // HEADER
+              // =================================================
+
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(
+                  8,
+                  5,
+                  16,
+                  4,
                 ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () {
+                        Navigator.pop(
+                          context,
+                        );
+                      },
+                      icon: const Icon(
+                        Icons
+                            .arrow_back_ios_new_rounded,
+                        color: Colors.white,
+                      ),
+                    ),
 
-                // =================================================
-                // CAMERA
-                // =================================================
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(22),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          _cameraView(),
+                    const Text(
+                      'Calibrate Position',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 21,
+                        fontWeight:
+                            FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
-                          IgnorePointer(
-                            child: CustomPaint(
-                              painter: _ReferenceCameraPainter(
-                                detected: positionDetected,
+              // =================================================
+              // CAMERA
+              // =================================================
+
+              Expanded(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.all(
+                    14,
+                  ),
+                  child: ClipRRect(
+                    borderRadius:
+                        BorderRadius.circular(
+                      22,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // =========================================
+                        // CAMERA PREVIEW
+                        // =========================================
+
+                        _cameraView(),
+
+                        // =========================================
+                        // VIEWFINDER BRACKETS
+                        // =========================================
+
+                        IgnorePointer(
+                          child: CustomPaint(
+                            painter:
+                                _ReferenceCameraPainter(
+                              detected:
+                                  positionDetected,
+                            ),
+                          ),
+                        ),
+
+                        // =========================================
+                        // POSITION STATUS
+                        // =========================================
+
+                        Positioned(
+                          top: 16,
+                          left: 16,
+                          child: Container(
+                            padding:
+                                const EdgeInsets
+                                    .symmetric(
+                              horizontal: 16,
+                              vertical: 9,
+                            ),
+                            decoration:
+                                BoxDecoration(
+                              color:
+                                  widget.isDarkMode
+                                      ? const Color(
+                                          0xFF0E1116,
+                                        )
+                                      : const Color(
+                                          0xFFF8F9FA,
+                                        ),
+                              borderRadius:
+                                  BorderRadius
+                                      .circular(
+                                18,
+                              ),
+                              border:
+                                  Border.all(
+                                color:
+                                    widget.isDarkMode
+                                        ? const Color(
+                                            0xFF2A2F37,
+                                          )
+                                        : const Color(
+                                            0xFFE0E3E8,
+                                          ),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize:
+                                  MainAxisSize
+                                      .min,
+                              children: [
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration:
+                                      BoxDecoration(
+                                    color:
+                                        positionDetected
+                                            ? const Color(
+                                                0xFF22C55E,
+                                              )
+                                            : _C.red,
+                                    shape:
+                                        BoxShape
+                                            .circle,
+                                  ),
+                                ),
+
+                                const SizedBox(
+                                  width: 9,
+                                ),
+
+                                Text(
+                                  positionDetected
+                                      ? 'Position Detected'
+                                      : 'Finding Position...',
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        positionDetected
+                                            ? const Color(
+                                                0xFF22C55E,
+                                              )
+                                            : _C.red,
+                                    fontSize: 14,
+                                    fontWeight:
+                                        FontWeight
+                                            .w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        // =========================================
+                        // COUNTDOWN OVERLAY
+                        // =========================================
+
+                        if (_countdownRemaining !=
+                            null)
+                          Center(
+                            child: Container(
+                              width: 116,
+                              height: 116,
+                              alignment:
+                                  Alignment.center,
+                              decoration:
+                                  BoxDecoration(
+                                color: Colors.black
+                                    .withValues(
+                                  alpha: .70,
+                                ),
+                                shape:
+                                    BoxShape.circle,
+                                border:
+                                    Border.all(
+                                  color:
+                                      Colors.white
+                                          .withValues(
+                                    alpha: .20,
+                                  ),
+                                ),
+                              ),
+                              child: Text(
+                                '${_countdownRemaining!}',
+                                style:
+                                    const TextStyle(
+                                  color:
+                                      Colors.white,
+                                  fontSize: 58,
+                                  height: 1,
+                                  fontWeight:
+                                      FontWeight
+                                          .w900,
+                                ),
                               ),
                             ),
                           ),
 
-                          Positioned(
-                            top: 16,
-                            left: 16,
+                        // =========================================
+                        // CALIBRATION OVERLAY
+                        // =========================================
+
+                        if (_collectingCalibration)
+                          Center(
                             child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 9,
+                              padding:
+                                  const EdgeInsets
+                                      .symmetric(
+                                horizontal: 18,
+                                vertical: 10,
                               ),
-                              decoration: BoxDecoration(
-                                color: widget.isDarkMode
-                                    ? const Color(0xFF0E1116)
-                                    : const Color(0xFFF8F9FA),
-                                borderRadius: BorderRadius.circular(18),
-                                border: Border.all(
-                                  color: widget.isDarkMode
-                                      ? const Color(0xFF2A2F37)
-                                      : const Color(0xFFE0E3E8),
+                              decoration:
+                                  BoxDecoration(
+                                color: Colors.black
+                                    .withValues(
+                                  alpha: .70,
+                                ),
+                                borderRadius:
+                                    BorderRadius
+                                        .circular(
+                                  999,
                                 ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
+                              child:
+                                  const Row(
+                                mainAxisSize:
+                                    MainAxisSize
+                                        .min,
                                 children: [
-                                  Container(
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      color: positionDetected
-                                          ? const Color(0xFF22C55E)
-                                          : _C.red,
-                                      shape: BoxShape.circle,
+                                  SizedBox(
+                                    width: 17,
+                                    height: 17,
+                                    child:
+                                        CircularProgressIndicator(
+                                      strokeWidth:
+                                          2,
+                                      color:
+                                          Color(
+                                        0xFF22C55E,
+                                      ),
                                     ),
                                   ),
-                                  const SizedBox(width: 9),
+
+                                  SizedBox(
+                                    width: 9,
+                                  ),
+
                                   Text(
-                                    positionDetected
-                                        ? 'Position Detected'
-                                        : 'Finding Position...',
-                                    style: TextStyle(
-                                      color: positionDetected
-                                          ? const Color(0xFF22C55E)
-                                          : _C.red,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w800,
+                                    'CALIBRATING',
+                                    style:
+                                        TextStyle(
+                                      color:
+                                          Colors.white,
+                                      fontSize:
+                                          13,
+                                      fontWeight:
+                                          FontWeight
+                                              .w800,
+                                      letterSpacing:
+                                          .5,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
                           ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
+              ),
 
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 7, 20, 23),
-                  child: Column(
-                    children: [
-                      Text(
-                        _status,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFFD6D9DE),
-                          fontSize: 14,
-                          height: 1.3,
+              // =================================================
+              // STATUS + CALIBRATION CONTROLS
+              // =================================================
+
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(
+                  20,
+                  7,
+                  20,
+                  23,
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      _status,
+                      textAlign:
+                          TextAlign.center,
+                      style:
+                          const TextStyle(
+                        color: Color(
+                          0xFFD6D9DE,
+                        ),
+                        fontSize: 14,
+                        height: 1.3,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 14,
+                    ),
+
+                    // =============================================
+                    // WAITING FOR USER
+                    // =============================================
+
+                    if (!_calibrationInProgress) ...[
+                      const Align(
+                        alignment:
+                            Alignment
+                                .centerLeft,
+                        child: Text(
+                          'Calibration Timing',
+                          style:
+                              TextStyle(
+                            color:
+                                Colors.white,
+                            fontSize: 14,
+                            fontWeight:
+                                FontWeight
+                                    .w800,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 14),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 54,
-                        child: ElevatedButton(
-                          onPressed: !positionDetected
-                                ? null
-                                : () {
-                                    final reference = _adaptiveReference;
 
-                                    if (reference != null) {
-                                      Navigator.pop(context, reference);
-                                    }
+                      const SizedBox(
+                        height: 9,
+                      ),
+
+                      Row(
+                        children: [
+                          // =========================================
+                          // QUICK
+                          // =========================================
+
+                          Expanded(
+                            child:
+                                ChoiceChip(
+                              label:
+                                  const SizedBox(
+                                width: double
+                                    .infinity,
+                                child: Text(
+                                  'Quick · 3 sec',
+                                  textAlign:
+                                      TextAlign
+                                          .center,
+                                ),
+                              ),
+
+                              selected:
+                                  _calibrationMode ==
+                                      _ReferenceCalibrationMode
+                                          .quick,
+
+                              onSelected: (
+                                selected,
+                              ) {
+                                if (!selected) {
+                                  return;
+                                }
+
+                                setState(
+                                  () {
+                                    _calibrationMode =
+                                        _ReferenceCalibrationMode
+                                            .quick;
                                   },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _C.red,
-                            foregroundColor: Colors.white,
-                            disabledBackgroundColor: const Color(0xFF444850),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
+                                );
+                              },
+
+                              selectedColor:
+                                  _C.red
+                                      .withValues(
+                                alpha: .22,
+                              ),
+
+                              backgroundColor:
+                                  const Color(
+                                0xFF15191F,
+                              ),
+
+                              side:
+                                  BorderSide(
+                                color:
+                                    _calibrationMode ==
+                                            _ReferenceCalibrationMode
+                                                .quick
+                                        ? _C.red
+                                        : const Color(
+                                            0xFF444A53,
+                                          ),
+                              ),
+
+                              labelStyle:
+                                  TextStyle(
+                                color:
+                                    _calibrationMode ==
+                                            _ReferenceCalibrationMode
+                                                .quick
+                                        ? Colors
+                                            .white
+                                        : const Color(
+                                            0xFFB6BBC4,
+                                          ),
+                                fontWeight:
+                                    FontWeight
+                                        .w700,
+                              ),
                             ),
                           ),
-                          child: const Text(
-                            'Capture Reference',
-                            style: TextStyle(
+
+                          const SizedBox(
+                            width: 9,
+                          ),
+
+                          // =========================================
+                          // CUSTOM COUNTDOWN
+                          // =========================================
+
+                          Expanded(
+                            child:
+                                ChoiceChip(
+                              label:
+                                  const SizedBox(
+                                width: double
+                                    .infinity,
+                                child: Text(
+                                  'Countdown',
+                                  textAlign:
+                                      TextAlign
+                                          .center,
+                                ),
+                              ),
+
+                              selected:
+                                  _calibrationMode ==
+                                      _ReferenceCalibrationMode
+                                          .countdown,
+
+                              onSelected: (
+                                selected,
+                              ) {
+                                if (!selected) {
+                                  return;
+                                }
+
+                                setState(
+                                  () {
+                                    _calibrationMode =
+                                        _ReferenceCalibrationMode
+                                            .countdown;
+                                  },
+                                );
+                              },
+
+                              selectedColor:
+                                  _C.red
+                                      .withValues(
+                                alpha: .22,
+                              ),
+
+                              backgroundColor:
+                                  const Color(
+                                0xFF15191F,
+                              ),
+
+                              side:
+                                  BorderSide(
+                                color:
+                                    _calibrationMode ==
+                                            _ReferenceCalibrationMode
+                                                .countdown
+                                        ? _C.red
+                                        : const Color(
+                                            0xFF444A53,
+                                          ),
+                              ),
+
+                              labelStyle:
+                                  TextStyle(
+                                color:
+                                    _calibrationMode ==
+                                            _ReferenceCalibrationMode
+                                                .countdown
+                                        ? Colors
+                                            .white
+                                        : const Color(
+                                            0xFFB6BBC4,
+                                          ),
+                                fontWeight:
+                                    FontWeight
+                                        .w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // =============================================
+                      // CUSTOM DELAY DROPDOWN
+                      // =============================================
+
+                      if (_calibrationMode ==
+                          _ReferenceCalibrationMode
+                              .countdown) ...[
+                        const SizedBox(
+                          height: 10,
+                        ),
+
+                        Container(
+                          padding:
+                              const EdgeInsets
+                                  .symmetric(
+                            horizontal: 14,
+                          ),
+                          decoration:
+                              BoxDecoration(
+                            color:
+                                const Color(
+                              0xFF15191F,
+                            ),
+                            borderRadius:
+                                BorderRadius
+                                    .circular(
+                              12,
+                            ),
+                            border:
+                                Border.all(
+                              color:
+                                  const Color(
+                                0xFF444A53,
+                              ),
+                            ),
+                          ),
+                          child:
+                              DropdownButtonHideUnderline(
+                            child:
+                                DropdownButton<
+                                    int>(
+                              value:
+                                  _customCountdownSeconds,
+
+                              isExpanded:
+                                  true,
+
+                              dropdownColor:
+                                  const Color(
+                                0xFF15191F,
+                              ),
+
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                                fontSize: 15,
+                              ),
+
+                              items:
+                                  const [
+                                DropdownMenuItem(
+                                  value: 5,
+                                  child:
+                                      Text(
+                                    '5 seconds',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value: 10,
+                                  child:
+                                      Text(
+                                    '10 seconds',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value: 15,
+                                  child:
+                                      Text(
+                                    '15 seconds',
+                                  ),
+                                ),
+                              ],
+
+                              onChanged: (
+                                value,
+                              ) {
+                                if (value ==
+                                    null) {
+                                  return;
+                                }
+
+                                setState(
+                                  () {
+                                    _customCountdownSeconds =
+                                        value;
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+
+                      const SizedBox(
+                        height: 14,
+                      ),
+
+                      // =============================================
+                      // START
+                      // =============================================
+
+                      SizedBox(
+                        width:
+                            double.infinity,
+                        height: 54,
+                        child:
+                            ElevatedButton(
+                          onPressed:
+                              _initializing ||
+                                      _controller ==
+                                          null
+                                  ? null
+                                  : _startCalibration,
+
+                          style:
+                              ElevatedButton
+                                  .styleFrom(
+                            backgroundColor:
+                                _C.red,
+                            foregroundColor:
+                                Colors.white,
+                            disabledBackgroundColor:
+                                const Color(
+                              0xFF444850,
+                            ),
+                            shape:
+                                RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius
+                                      .circular(
+                                14,
+                              ),
+                            ),
+                          ),
+
+                          child: Text(
+                            _calibrationMode ==
+                                    _ReferenceCalibrationMode
+                                        .quick
+                                ? 'Start Quick Calibration'
+                                : 'Start $_customCountdownSeconds-Second Countdown',
+                            style:
+                                const TextStyle(
                               fontSize: 17,
-                              fontWeight: FontWeight.w800,
+                              fontWeight:
+                                  FontWeight
+                                      .w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ]
+
+                    // =============================================
+                    // COUNTDOWN / CALIBRATION CURRENTLY RUNNING
+                    // =============================================
+
+                    else ...[
+                      SizedBox(
+                        width:
+                            double.infinity,
+                        height: 48,
+                        child:
+                            OutlinedButton(
+                          onPressed: () {
+                            _cancelCalibration();
+                          },
+
+                          style:
+                              OutlinedButton
+                                  .styleFrom(
+                            foregroundColor:
+                                Colors.white,
+
+                            side:
+                                const BorderSide(
+                              color: Color(
+                                0xFF555B65,
+                              ),
+                            ),
+
+                            shape:
+                                RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius
+                                      .circular(
+                                14,
+                              ),
+                            ),
+                          ),
+
+                          child:
+                              const Text(
+                            'Cancel Calibration',
+                            style:
+                                TextStyle(
+                              fontWeight:
+                                  FontWeight
+                                      .w700,
                             ),
                           ),
                         ),
                       ),
                     ],
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
 
   Widget _cameraView() {
     if (_initializing) {

@@ -1001,84 +1001,150 @@ void _selectTaskTab(int index) {
   // START TASK
   // ===========================================================
 
-  Future<void> _startTask(TaskData task) async {
-    final current = activeTask;
+Future<void> _startTask(TaskData task) async {
+  final current = activeTask;
 
-    if (current != null && current.id != task.id) {
-      _message(
-        '${current.name} is already running. Finish it before starting another task.',
-      );
+  if (current != null && current.id != task.id) {
+    _message(
+      '${current.name} is already running. Finish it before starting another task.',
+    );
 
-      return;
-    }
+    return;
+  }
 
-    switch (task.mode) {
-      case TaskMode.focus:
+  // ===========================================================
+  // CHECK MODE REQUIREMENTS
+  // ===========================================================
+
+  switch (task.mode) {
+    case TaskMode.focus:
       if ((task.stayInPosition || task.objectInFrame) &&
           !MlKitCameraImageConverter.supported) {
         _message(
           'Focus camera verification must be tested on Android or iPhone, not Chrome.',
         );
+
         return;
       }
+
       break;
 
-      case TaskMode.active:
-        if (!MlKitCameraImageConverter.supported) {
-          _message('Active verification must be used on Android or iPhone.');
-          return;
-        }
+    case TaskMode.active:
+      if (!MlKitCameraImageConverter.supported) {
+        _message(
+          'Active verification must be used on Android or iPhone.',
+        );
 
-        if (task.activeConfig == null) {
-          _message('This task is missing its Active verification setup.');
-          return;
-        }
+        return;
+      }
+
+      if (task.activeConfig == null) {
+        _message(
+          'This task is missing its Active verification setup.',
+        );
+
+        return;
+      }
+
+      break;
+
+    case TaskMode.workout:
+      if (!MlKitCameraImageConverter.supported) {
+        _message(
+          'Workout verification must be used on Android or iPhone.',
+        );
+
+        return;
+      }
+
+      if (task.workoutConfig == null) {
+        _message(
+          'This task is missing its Workout setup.',
+        );
+
+        return;
+      }
+
+      break;
+  }
+
+  // ===========================================================
+  // FOCUS CALIBRATION
+  // ===========================================================
+  //
+  // Every Stay in Position task must have a reference BEFORE
+  // LiveVerificationPage opens.
+  //
+  // This means both:
+  //
+  // 1. Calibrating while creating the task
+  //
+  // and
+  //
+  // 2. Skipping calibration and pressing Start later
+  //
+  // use the SAME countdown calibration page.
+  // ===========================================================
+
+  if (task.mode == TaskMode.focus &&
+      task.stayInPosition &&
+      task.poseReference == null) {
+    final reference = await Navigator.push<PoseReference>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReferencePositionPage(
+          isDarkMode: isDarkMode,
+          focusActivity: task.focusActivity,
+        ),
+      ),
+    );
+
+    // They backed out of calibration.
+    // Do NOT start the task.
+    if (reference == null || !mounted) {
+      return;
+    }
+
+    task.poseReference = reference;
+  }
+
+  if (!mounted) {
+    return;
+  }
+
+  // ===========================================================
+  // START TASK
+  // ===========================================================
+
+  setState(() {
+    task.status = TaskStatus.live;
+
+    task.completedAt = null;
+
+    task.scheduleAlertShown = true;
+
+    switch (task.mode) {
+      case TaskMode.focus:
+        // Focus calibration, when required, has already
+        // completed above. Start the timer now.
+        task.startedAt = DateTime.now();
+        break;
+
+      case TaskMode.active:
+        task.startedAt = DateTime.now();
         break;
 
       case TaskMode.workout:
-        if (!MlKitCameraImageConverter.supported) {
-          _message('Workout verification must be used on Android or iPhone.');
-          return;
-        }
-        if (task.workoutConfig == null) {
-          _message('This task is missing its Workout setup.');
-          return;
-        }
+        // WorkoutVerificationPage controls its own start.
+        task.startedAt = null;
         break;
     }
+  });
 
-        setState(() {
-        task.status = TaskStatus.live;
+  _selectTaskTab(0);
 
-        task.completedAt = null;
-
-        task.scheduleAlertShown = true;
-
-        switch (task.mode) {
-        case TaskMode.focus:
-          // If a reference was already captured, begin immediately.
-          // Otherwise Focus verification first asks for calibration.
-          task.startedAt =
-          task.stayInPosition && task.poseReference == null
-              ? null
-              : DateTime.now();
-          break;
-
-        case TaskMode.active:
-          task.startedAt = DateTime.now();
-          break;
-
-        case TaskMode.workout:
-          task.startedAt = null;
-          break;
-      }
-    });
-
-    _selectTaskTab(0);
-
-    await _openLiveSession(task);
-    }
-
+  await _openLiveSession(task);
+}
     // ===========================================================
     // OPEN LIVE SESSION
     // ===========================================================
@@ -1657,6 +1723,16 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
 
   bool _leftAppWhileMonitoring = false;
 
+  // ===========================================================
+  // PAUSE STATE
+  // ===========================================================
+
+  bool _userPaused = false;
+
+  bool _pauseTransitionRunning = false;
+
+  Duration? _pausedRemaining;
+
   String _status = 'Preparing verification...';
 
   String? _warningReason;
@@ -1766,37 +1842,67 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
   // ===========================================================
   // APP LIFECYCLE
   // ===========================================================
+@override
+void didChangeAppLifecycleState(
+  AppLifecycleState state,
+) {
+  if (!widget.task.stayInPosition &&
+      !widget.task.objectInFrame) {
+    return;
+  }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!widget.task.stayInPosition && !widget.task.objectInFrame) {
+  // =========================================================
+  // APP LEFT / BACKGROUNDED
+  // =========================================================
+
+  if (state == AppLifecycleState.paused ||
+      state == AppLifecycleState.inactive) {
+    // Leaving TaskProof normally is a verification
+    // violation.
+    //
+    // But if the USER intentionally paused the session,
+    // backgrounding the app should not create another
+    // violation.
+    if (!_userPaused &&
+        _hasBeenMonitoring &&
+        widget.task.startedAt != null) {
+      _leftAppWhileMonitoring = true;
+    }
+
+    unawaited(
+      _disposeCamera(),
+    );
+
+    return;
+  }
+
+  // =========================================================
+  // APP RETURNED
+  // =========================================================
+
+  if (state == AppLifecycleState.resumed &&
+      widget.task.status == TaskStatus.live) {
+    // If the user explicitly paused TaskProof,
+    // leave the camera off until they press Resume.
+    if (_userPaused) {
+      _leftAppWhileMonitoring = false;
+
       return;
     }
 
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      if (_hasBeenMonitoring && widget.task.startedAt != null) {
-        _leftAppWhileMonitoring = true;
-      }
+    unawaited(
+      _initializeCamera(),
+    );
 
-      _disposeCamera();
+    if (_leftAppWhileMonitoring) {
+      _leftAppWhileMonitoring = false;
 
-      return;
-    }
-
-    if (state == AppLifecycleState.resumed &&
-        widget.task.status == TaskStatus.live) {
-      _initializeCamera();
-
-      if (_leftAppWhileMonitoring) {
-        _leftAppWhileMonitoring = false;
-
-        _forceWarning(
-          'You left TaskProof during an active verification session.',
-        );
-      }
+      _forceWarning(
+        'You left TaskProof during an active verification session.',
+      );
     }
   }
+}
 
   // ===========================================================
   // INITIALIZE ML
@@ -1922,10 +2028,12 @@ Future<void> _loadRequiredObjects() async {
   // ===========================================================
 
 
-
-
-Future<void> _initializeCamera() async {
-  if (_startingCamera || _controller != null) {
+  Future<void> _initializeCamera() async {
+  // An intentionally paused Focus session must not
+  // restart the camera until Resume is pressed.
+  if (_userPaused ||
+      _startingCamera ||
+      _controller != null) {
     return;
   }
 
@@ -1946,7 +2054,9 @@ Future<void> _initializeCamera() async {
     }
 
     _camera = cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.front,
+      (camera) =>
+          camera.lensDirection ==
+          CameraLensDirection.front,
       orElse: () => cameras.first,
     );
 
@@ -1954,10 +2064,18 @@ Future<void> _initializeCamera() async {
       _camera!,
       ResolutionPreset.medium,
       enableAudio: false,
-      imageFormatGroup: MlKitCameraImageConverter.cameraFormat,
+      imageFormatGroup:
+          MlKitCameraImageConverter.cameraFormat,
     );
 
     await controller.initialize();
+
+    // The user could press Pause while the camera
+    // was still initializing.
+    if (!mounted || _userPaused) {
+      await controller.dispose();
+      return;
+    }
 
     try {
       await controller.lockCaptureOrientation(
@@ -1968,11 +2086,16 @@ Future<void> _initializeCamera() async {
     _controller = controller;
 
     _latestFaces = const [];
-    _lastFaceAnalysis = DateTime.fromMillisecondsSinceEpoch(0);
 
-    await controller.startImageStream(_processFrame);
+    _lastFaceAnalysis =
+        DateTime.fromMillisecondsSinceEpoch(0);
 
-    if (!mounted) {
+    await controller.startImageStream(
+      _processFrame,
+    );
+
+    if (!mounted || _userPaused) {
+      await _disposeCamera();
       return;
     }
 
@@ -1981,15 +2104,22 @@ Future<void> _initializeCamera() async {
 
       if (widget.task.stayInPosition &&
           widget.task.poseReference == null) {
-        _status = 'Get into your normal position, then calibrate.';
+        _status =
+            'Get into your normal position, then calibrate.';
       } else {
-        widget.task.startedAt ??= DateTime.now();
+        widget.task.startedAt ??=
+            DateTime.now();
 
-        _remainingTime.value = remainingLiveTime(widget.task);
+        _remainingTime.value =
+            remainingLiveTime(
+          widget.task,
+        );
 
-        _objectMonitoringStartedAt ??= DateTime.now();
+        _objectMonitoringStartedAt ??=
+            DateTime.now();
 
-        _status = 'Actively verifying';
+        _status =
+            'Actively verifying';
 
         _hasBeenMonitoring = true;
       }
@@ -2001,7 +2131,9 @@ Future<void> _initializeCamera() async {
 
     setState(() {
       _cameraInitializing = false;
-      _status = 'Camera error: ${error.description ?? error.code}';
+
+      _status =
+          'Camera error: ${error.description ?? error.code}';
     });
   } finally {
     _startingCamera = false;
@@ -2014,6 +2146,7 @@ Future<void> _initializeCamera() async {
     _resetFidgetTracking();
 
     _latestPose = null;
+
     _latestFaces = const [];
 
     _lastAnalysis =
@@ -2026,6 +2159,7 @@ Future<void> _initializeCamera() async {
     // discard incomplete calibration samples.
     if (widget.task.poseReference == null) {
       _liveCalibrationSamples.clear();
+
       _liveCalibrationReady = false;
     }
 
@@ -2059,9 +2193,12 @@ Future<void> _initializeCamera() async {
   // ===========================================================
 
   Future<void> _processFrame(CameraImage image) async {
-  if (_processing || _controller == null || _camera == null) {
-    return;
-  }
+    if (_userPaused ||
+        _processing ||
+        _controller == null ||
+        _camera == null) {
+      return;
+    }
 
   final controller = _controller!;
   final camera = _camera!;
@@ -2755,45 +2892,214 @@ void _calibrateAndStart() {
   // ===========================================================
   // SESSION TIMER
   // ===========================================================
+// ===========================================================
+// PAUSE / RESUME
+// ===========================================================
 
-  void _sessionTick() {
-    if (!mounted) {
-      return;
-    }
-
-    if (widget.task.status == TaskStatus.completed) {
-      return;
-    }
-
-    if (widget.task.status != TaskStatus.live ||
-        widget.task.startedAt == null) {
-      return;
-    }
-
-    final remaining = remainingLiveTime(widget.task);
-
-  if (remaining <= Duration.zero) {
-  _completeSession();
-
-      return;
-    }
-
-
-    // Also keep repeating warning if the pose detector
-    // is currently in warning state.
-
-    if (_warningActive && !_isRechecking) {
-      _playWarning();
-    }
-
-    // The countdown is the only UI that changes on a normal timer tick. Avoid
-    // rebuilding the camera page, and do not update even that small subtree
-    // while a dialog or another route covers this page.
-    if (ModalRoute.of(context)?.isCurrent ?? true) {
-      _remainingTime.value = remaining;
-    }
+Future<void> _togglePause() async {
+  if (_pauseTransitionRunning ||
+      widget.task.status != TaskStatus.live ||
+      widget.task.startedAt == null) {
+    return;
   }
 
+  _pauseTransitionRunning = true;
+
+  // =========================================================
+  // PAUSE
+  // =========================================================
+
+  if (!_userPaused) {
+    final remaining =
+        remainingLiveTime(widget.task);
+
+    // The session finished at essentially the same
+    // moment Pause was pressed.
+    if (remaining <= Duration.zero) {
+      _pauseTransitionRunning = false;
+
+      await _completeSession();
+
+      return;
+    }
+
+    if (!mounted) {
+      _pauseTransitionRunning = false;
+
+      return;
+    }
+
+    setState(() {
+      _userPaused = true;
+
+      _pausedRemaining = remaining;
+
+      // Freeze the visible timer immediately.
+      _remainingTime.value = remaining;
+
+      // Pause is intentional, so clear verification
+      // warnings and incomplete violation timers.
+      _warningActive = false;
+
+      _warningReason = null;
+
+      _violationStartedAt = null;
+
+      _recoveryStartedAt = null;
+
+      _leftAppWhileMonitoring = false;
+
+      // Once the camera has been disposed,
+      // _liveCameraBody() will display this status.
+      _cameraInitializing = false;
+
+      _status = 'Paused';
+    });
+
+    // Camera + verification stop while paused.
+    await _disposeCamera();
+
+    if (!mounted) {
+      _pauseTransitionRunning = false;
+
+      return;
+    }
+
+    setState(() {
+      _pauseTransitionRunning = false;
+    });
+
+    return;
+  }
+
+  // =========================================================
+  // RESUME
+  // =========================================================
+
+  final remaining =
+      _pausedRemaining ??
+      _remainingTime.value;
+
+  if (!mounted) {
+    _pauseTransitionRunning = false;
+
+    return;
+  }
+
+  setState(() {
+    // Rebuild startedAt so time spent paused is NOT
+    // counted as session time.
+    //
+    // Example:
+    //
+    // 30 minute task
+    // 20 minutes remaining
+    //
+    // elapsed task time = 10 minutes.
+    //
+    // We move startedAt to "10 minutes ago" regardless
+    // of how long the user stayed paused.
+    final elapsedTaskTime =
+        widget.task.duration - remaining;
+
+    widget.task.startedAt =
+        DateTime.now().subtract(
+      elapsedTaskTime,
+    );
+
+    _userPaused = false;
+
+    _pausedRemaining = null;
+
+    _cameraInitializing = true;
+
+    _status =
+        'Resuming verification...';
+  });
+
+  await _initializeCamera();
+
+  if (!mounted) {
+    _pauseTransitionRunning = false;
+
+    return;
+  }
+
+  setState(() {
+    _pauseTransitionRunning = false;
+  });
+}
+
+void _sessionTick() {
+  if (!mounted) {
+    return;
+  }
+
+  if (widget.task.status ==
+      TaskStatus.completed) {
+    return;
+  }
+
+  if (widget.task.status !=
+      TaskStatus.live) {
+    return;
+  }
+
+  // =========================================================
+  // PAUSED
+  // =========================================================
+
+  if (_userPaused) {
+    final remaining =
+        _pausedRemaining;
+
+    // Keep the displayed countdown frozen at the
+    // exact value it had when Pause was pressed.
+    if (remaining != null &&
+        (ModalRoute.of(context)?.isCurrent ??
+            true)) {
+      _remainingTime.value =
+          remaining;
+    }
+
+    return;
+  }
+
+  // =========================================================
+  // RUNNING
+  // =========================================================
+
+  if (widget.task.startedAt == null) {
+    return;
+  }
+
+  final remaining =
+      remainingLiveTime(
+    widget.task,
+  );
+
+  if (remaining <= Duration.zero) {
+    unawaited(
+      _completeSession(),
+    );
+
+    return;
+  }
+
+  // Continue repeating the warning while an
+  // unresolved verification violation exists.
+  if (_warningActive &&
+      !_isRechecking) {
+    _playWarning();
+  }
+
+  // Only the countdown needs to update every second.
+  if (ModalRoute.of(context)?.isCurrent ??
+      true) {
+    _remainingTime.value =
+        remaining;
+  }
+}
   // ===========================================================
   // COMPLETE
   // ===========================================================
@@ -2894,40 +3200,63 @@ void _calibrateAndStart() {
     Navigator.pop(context);
   }
 
-  Color _verificationColor(bool needsCalibration) {
-    if (needsCalibration) {
-      return const Color(0xFFFFB72E);
-    }
-
-    // Flash from red to white while verifying again.
-    if (_isRechecking) {
-      return Color.lerp(_C.red, Colors.white, _recheckFlashController.value) ??
-          _C.red;
-    }
-
-    // Person is outside the reference position.
-    if (_warningActive && !_isRechecking) {
-      return _C.red;
-    }
-
-    // Everything is correct.
-    return _verifiedGreen;
+ Color _verificationColor(
+  bool needsCalibration,
+) {
+  if (_userPaused) {
+    return const Color(
+      0xFF9CA3AF,
+    );
   }
 
-  String _verificationLabel(bool needsCalibration) {
-    if (needsCalibration) {
-      return 'Ready to calibrate';
-    }
+  if (needsCalibration) {
+    return const Color(
+      0xFFFFB72E,
+    );
+  }
 
-    if (_isRechecking) {
-      return 'Verifying again...';
-    }
+  // Flash from red to white while verifying again.
+  if (_isRechecking) {
+    return Color.lerp(
+          _C.red,
+          Colors.white,
+          _recheckFlashController.value,
+        ) ??
+        _C.red;
+  }
 
-    if (_warningActive && !_isRechecking) {
+  // Person is outside the reference position.
+  if (_warningActive &&
+      !_isRechecking) {
+    return _C.red;
+  }
+
+  // Everything is correct.
+  return _verifiedGreen;
+}
+
+String _verificationLabel(
+  bool needsCalibration,
+) {
+  if (_userPaused) {
+    return 'Paused';
+  }
+
+  if (needsCalibration) {
+    return 'Ready to calibrate';
+  }
+
+  if (_isRechecking) {
+    return 'Verifying again...';
+  }
+
+  if (_warningActive &&
+      !_isRechecking) {
     return 'Focus interrupted';
   }
-    return 'Actively Verifying';
-  }
+
+  return 'Actively Verifying';
+}
 
   Widget _buildVerificationStatus(bool needsCalibration) {
     return AnimatedBuilder(
@@ -3198,41 +3527,89 @@ void _calibrateAndStart() {
                         ),
                         child: Row(
                           children: [
-                            // PAUSE
-                            Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 54,
-                                  height: 54,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: widget.isDarkMode
-                                        ? const Color(0xFF191D23)
-                                        : const Color(0xFFF5F5F6),
-                                    border: Border.all(
-                                      color: const Color(0xFFD7D9DE),
+                           // PAUSE / RESUME
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              GestureDetector(
+                                onTap: _pauseTransitionRunning
+                                    ? null
+                                    : () {
+                                        unawaited(
+                                          _togglePause(),
+                                        );
+                                      },
+                                child: AnimatedOpacity(
+                                  duration: const Duration(
+                                    milliseconds: 160,
+                                  ),
+                                  opacity: _pauseTransitionRunning
+                                      ? .55
+                                      : 1,
+                                  child: Container(
+                                    width: 54,
+                                    height: 54,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: widget.isDarkMode
+                                          ? const Color(
+                                              0xFF191D23,
+                                            )
+                                          : const Color(
+                                              0xFFF5F5F6,
+                                            ),
+                                      border: Border.all(
+                                        color: _userPaused
+                                            ? _verifiedGreen
+                                            : const Color(
+                                                0xFFD7D9DE,
+                                              ),
+                                      ),
                                     ),
-                                  ),
-                                  child: Icon(
-                                    Icons.pause_rounded,
-                                    color: widget.isDarkMode
-                                        ? Colors.white
-                                        : Colors.black,
+                                    child: _pauseTransitionRunning
+                                        ? const Padding(
+                                            padding: EdgeInsets.all(
+                                              16,
+                                            ),
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.2,
+                                              color: _C.red,
+                                            ),
+                                          )
+                                        : Icon(
+                                            _userPaused
+                                                ? Icons.play_arrow_rounded
+                                                : Icons.pause_rounded,
+                                            color: _userPaused
+                                                ? _verifiedGreen
+                                                : widget.isDarkMode
+                                                    ? Colors.white
+                                                    : Colors.black,
+                                          ),
                                   ),
                                 ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  'Pause',
-                                  style: TextStyle(
-                                    color: widget.isDarkMode
-                                        ? Colors.white
-                                        : Colors.black,
-                                    fontSize: 12,
-                                  ),
+                              ),
+
+                              const SizedBox(
+                                height: 5,
+                              ),
+
+                              Text(
+                                _userPaused
+                                    ? 'Resume'
+                                    : 'Pause',
+                                style: TextStyle(
+                                  color: widget.isDarkMode
+                                      ? Colors.white
+                                      : Colors.black,
+                                  fontSize: 12,
+                                  fontWeight: _userPaused
+                                      ? FontWeight.w700
+                                      : FontWeight.w400,
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
+                          ),
 
                             // TIMER
                             Expanded(
