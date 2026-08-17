@@ -42,8 +42,14 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
   static const _analysisInterval = Duration(milliseconds: 100);
   static const _personLossGrace = Duration(milliseconds: 1000);
   static const _exerciseLossGrace = Duration(milliseconds: 1100);
-  static const _initialReadyDuration = Duration(milliseconds: 400);
-  static const _jumpingJackReadinessGrace = Duration(milliseconds: 950);
+  static const _initialReadyDuration =
+      Duration(milliseconds: 400);
+  static const _pushUpReadyDuration =
+      Duration(milliseconds: 850);
+  static const _pushUpCountdownGrace =
+      Duration(milliseconds: 900);
+  static const _jumpingJackReadinessGrace =
+      Duration(milliseconds: 950);
   static const bool _showWorkoutDebug = false;
 
   late final WorkoutTaskConfig _config;
@@ -89,6 +95,7 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
   DateTime? _lastJumpingJackSignalsSeen;
   DateTime? _readySince;
   DateTime? _countdownStarted;
+  DateTime? _pushUpCountdownUnreadySince;
   DateTime? _exerciseInvalidSince;
   DateTime? _restStarted;
   DateTime? _coverageLostSince;
@@ -160,13 +167,19 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
       _refresh();
       return;
     }
-    _poseDetector = PoseDetector(
-      options: PoseDetectorOptions(
-        model: PoseDetectionModel.base,
-        mode: PoseDetectionMode.stream,
-      ),
-    );
-    await _startCamera();
+  _poseDetector = PoseDetector(
+    options: PoseDetectorOptions(
+      // Push-ups use the higher-precision landmark model.
+      // Other workouts keep the existing base model.
+      model:
+          _config.exercise == WorkoutExercise.pushUps
+          ? PoseDetectionModel.accurate
+          : PoseDetectionModel.base,
+      mode: PoseDetectionMode.stream,
+    ),
+  );
+
+  await _startCamera();
   }
 
   Future<bool> _startCamera() {
@@ -428,8 +441,10 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
       if (observation.cameraReady) {
         _readySince ??= now;
         final readyDuration = _resumeWarmup
-            ? const Duration(milliseconds: 400)
-            : _initialReadyDuration;
+          ? const Duration(milliseconds: 400)
+          : _config.exercise == WorkoutExercise.pushUps
+          ? _pushUpReadyDuration
+          : _initialReadyDuration;
         if (now.difference(_readySince!) >= readyDuration) {
           _beginCountdown(resume: _resumeWarmup);
         }
@@ -441,15 +456,50 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
     }
 
     if (_state == WorkoutSessionState.countdown) {
-      final signalsSeen = _lastJumpingJackSignalsSeen;
+      if (_config.exercise ==
+          WorkoutExercise.pushUps) {
+        final debug =
+            observation.pushUpDebug;
+
+        final coreSignalsHealthy =
+            observation.personPresent &&
+            debug != null &&
+            debug.signalsAvailable &&
+            debug.torsoHorizontal;
+
+        if (coreSignalsHealthy) {
+          _pushUpCountdownUnreadySince = null;
+        } else {
+          _pushUpCountdownUnreadySince ??= now;
+
+          if (now.difference(
+                _pushUpCountdownUnreadySince!,
+              ) >=
+              _pushUpCountdownGrace) {
+            _cancelCountdown();
+          }
+        }
+
+        _refresh();
+        return;
+      }
+
+      final signalsSeen =
+          _lastJumpingJackSignalsSeen;
+
       final jumpingJackSignalsRecentlyAvailable =
-          _config.exercise == WorkoutExercise.jumpingJacks &&
-          _jumpingJackBaselineLatched &&
-          signalsSeen != null &&
-          now.difference(signalsSeen) <= _jumpingJackReadinessGrace;
-      if (!observation.cameraReady && !jumpingJackSignalsRecentlyAvailable) {
+          _config.exercise ==
+                  WorkoutExercise.jumpingJacks &&
+              _jumpingJackBaselineLatched &&
+              signalsSeen != null &&
+              now.difference(signalsSeen) <=
+                  _jumpingJackReadinessGrace;
+
+      if (!observation.cameraReady &&
+          !jumpingJackSignalsRecentlyAvailable) {
         _cancelCountdown();
       }
+
       _refresh();
       return;
     }
@@ -552,6 +602,7 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
   void _beginCountdown({required bool resume}) {
     _countdownSeconds = resume ? 1 : 3;
     _countdownStarted = DateTime.now();
+    _pushUpCountdownUnreadySince = null;
     _state = WorkoutSessionState.countdown;
     _status = 'Ready';
     _resumeWarmup = false;
@@ -561,17 +612,23 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
   void _cancelCountdown() {
     _state = WorkoutSessionState.preparing;
     _countdownStarted = null;
+    _pushUpCountdownUnreadySince = null;
     _readySince = null;
-    _status = workoutCameraGuidance(_config.exercise, _observation);
+    _status =
+        workoutCameraGuidance(
+          _config.exercise,
+          _observation,
+        );
   }
 
   void _startExercise(DateTime now) {
     // Clear any in-progress cycle while retaining the closed Jumping Jack
     // stance learned during preparation/countdown.
     _analyzer.resetRepPhase();
-    _state = WorkoutSessionState.exercising;
+   _state = WorkoutSessionState.exercising;
     _warning = null;
     _countdownStarted = null;
+    _pushUpCountdownUnreadySince = null;
     _lastTick = now;
     _lastPersonSeen = now;
     _exerciseValid = false;
@@ -702,6 +759,7 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
     _lastJumpingJackSignalsSeen = null;
     _exerciseValid = false;
     _state = WorkoutSessionState.paused;
+    _pushUpCountdownUnreadySince = null;
     _status = 'Workout paused';
     _lastTick = null;
     _restStarted = null;
@@ -723,9 +781,10 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
   Future<void> _resumeVerification() async {
     if (_closing || _lifecyclePaused || _userPaused) return;
     _resumeWarmup = true;
-    _state = WorkoutSessionState.preparing;
+     _state = WorkoutSessionState.preparing;
     _status = 'Restarting camera';
     _readySince = null;
+    _pushUpCountdownUnreadySince = null;
     _lastPersonSeen = null;
     _lastJumpingJackSignalsSeen = null;
     _analyzer.reset();

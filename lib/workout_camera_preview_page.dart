@@ -60,9 +60,16 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
       movementType: widget.movementType,
       sensitivity: widget.sensitivity,
     );
-    _detector = PoseDetector(
+      _detector = PoseDetector(
       options: PoseDetectorOptions(
-        model: PoseDetectionModel.base,
+        // Match live verification: Push-ups use
+        // the higher-precision model.
+        // Every other exercise remains on base.
+        model:
+            widget.exercise ==
+                WorkoutExercise.pushUps
+            ? PoseDetectionModel.accurate
+            : PoseDetectionModel.base,
         mode: PoseDetectionMode.stream,
       ),
     );
