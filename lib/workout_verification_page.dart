@@ -491,8 +491,7 @@ Future<void> _restorePortraitOrientation() async {
         final coreSignalsHealthy =
             observation.personPresent &&
             debug != null &&
-            debug.signalsAvailable &&
-            debug.torsoHorizontal;
+            debug.signalsAvailable;
 
         if (coreSignalsHealthy) {
           _pushUpCountdownUnreadySince = null;

@@ -28,34 +28,82 @@ class PushUpDebugData {
     required this.repCounted,
     required this.topThreshold,
     required this.bottomThreshold,
+
     this.shoulderConfidence,
     this.elbowConfidence,
     this.wristConfidence,
+
     this.elbowAngle,
     this.leftElbowAngle,
     this.rightElbowAngle,
+
     this.bodyAlignmentAngle,
+
+    this.wristSupportEvidence,
+    this.nonWristSupportEvidence,
+
+    this.elbowPerpendicularity,
+    this.elbowSupportScore,
+
+    this.anchorTravel,
+    this.maxAnchorTravel,
+
+    this.anchorElbowBend,
+    this.anchorUpperArmDelta,
+    this.maxAnchorArmBend,
+
+    this.torsoOnlyTrackable,
   });
 
   final bool poseDetected;
   final bool signalsAvailable;
+
   final PushUpTrackedSide trackedSide;
+
   final double? shoulderConfidence;
   final double? elbowConfidence;
   final double? wristConfidence;
+
   final double? elbowAngle;
   final double? leftElbowAngle;
   final double? rightElbowAngle;
+
   final bool torsoHorizontal;
+
   final double? bodyAlignmentAngle;
+
   final bool topCandidate;
   final bool bottomCandidate;
+
   final PushUpPhase phase;
+
   final int signalMissingMilliseconds;
+
   final bool repCounted;
+
   final double topThreshold;
   final double bottomThreshold;
+
+  // Support debugging.
+  final bool? wristSupportEvidence;
+  final bool? nonWristSupportEvidence;
+
+  final double? elbowPerpendicularity;
+  final double? elbowSupportScore;
+
+  // Anchor debugging.
+  final double? anchorTravel;
+  final double? maxAnchorTravel;
+
+  final double? anchorElbowBend;
+  final double? anchorUpperArmDelta;
+  final double? maxAnchorArmBend;
+
+  // Occlusion debugging.
+  final bool? torsoOnlyTrackable;
 }
+
+
 
 enum _PrecisionRepPhase {
   waitingForStart,
@@ -115,7 +163,7 @@ String workoutCameraGuidance(
   if (observation == null || !observation.personPresent) {
     return switch (exercise) {
     WorkoutExercise.pushUps =>
-      'Keep one shoulder, elbow, and hip visible; show one wrist briefly to lock the start',
+      'Get into your natural push-up starting position',
       WorkoutExercise.squats =>
         'Keep your shoulders, hips, knees, and ankles in frame',
       WorkoutExercise.sitUps => 'Keep your shoulder, hip, and knee in frame',
@@ -133,10 +181,10 @@ String workoutCameraGuidance(
     if (!observation.repetitionSignalsAvailable) {
       return switch (exercise) {
         WorkoutExercise.pushUps =>
-          'Keep one shoulder, elbow, and hip visible',
+            'Keep one shoulder, elbow, and hip visible',
         WorkoutExercise.squats =>
           'Keep both hips, knees, ankles, and your torso in frame',
-        WorkoutExercise.sitUps => 'Keep one shoulder, hip, and knee in frame',
+        WorkoutExercise.sitUps =>  'Keep one shoulder, hip, and knee visible',
         WorkoutExercise.lunges => 'Keep both legs and your torso in frame',
         _ => 'Show more of your body',
       };
@@ -145,7 +193,7 @@ String workoutCameraGuidance(
     if (!observation.repetitionReady) {
       return switch (exercise) {
         WorkoutExercise.pushUps =>
-         'Hold the top push-up position with one wrist visible briefly',
+  'Hold your natural starting push-up position briefly',
         WorkoutExercise.squats => 'Stand tall with both legs straight',
         WorkoutExercise.sitUps => 'Lie back in the starting sit-up position',
         WorkoutExercise.lunges => 'Stand tall before beginning the lunge',
@@ -278,22 +326,64 @@ class WorkoutPoseAnalyzer {
   bool? _pushUpSwitchCandidateRight;
   int _pushUpSwitchCandidateFrames = 0;
 
-  // The push-up tracker learns the user's real top pose instead of assuming
-  // one universal camera angle. Baselines are kept per side because ML Kit
-  // can see the near and far arms very differently.
+  // ============================================================
+  // ADAPTIVE PUSH-UP TOP BASELINES
+  // ============================================================
+  //
+  // These follow the user's natural top position gradually.
+
   final Map<bool, double> _pushUpTopElbowBaselines = {};
   final Map<bool, double> _pushUpUpperArmTopBaselines = {};
   final Map<bool, int> _pushUpUpperArmBaselineSamples = {};
+
   final Map<bool, Offset> _pushUpTopTorsoCenters = {};
   final Map<bool, Offset> _pushUpTopTorsoNormals = {};
   final Map<bool, double> _pushUpTopTorsoLengths = {};
 
-  double? _pushUpSmoothedElbowAngle;
-  Offset? _pushUpSmoothedTorsoCenter;
-  double _pushUpMaxTravel = 0;
-  double _pushUpMaxArmBend = 0;
+  // ============================================================
+  // SLOW SESSION ANCHORS
+  // ============================================================
+//
+// Adaptive baselines above follow normal body drift.
+//
+// These anchors move MUCH more slowly and only while a supported
+// top pose is stable.
+//
+// They act as anti-drift sanity checks rather than forcing the user
+// to remain in one exact screen position.
 
-  JumpingJackPhase _jumpingJackPhase = JumpingJackPhase.waitingForClosed;
+final Map<bool, Offset>
+    _pushUpAnchorTorsoCenters = {};
+
+final Map<bool, Offset>
+    _pushUpAnchorTorsoNormals = {};
+
+final Map<bool, double>
+    _pushUpAnchorTorsoLengths = {};
+
+final Map<bool, double>
+    _pushUpAnchorElbowBaselines = {};
+
+final Map<bool, double>
+    _pushUpAnchorUpperArmBaselines = {};
+
+final Map<bool, bool>
+    _pushUpAnchorLocked = {};
+
+final Map<bool, int>
+    _pushUpAnchorDisagreementFrames = {};
+
+double? _pushUpMaxAnchorTravel;
+double? _pushUpMaxAnchorArmBend;
+
+double? _pushUpSmoothedElbowAngle;
+Offset? _pushUpSmoothedTorsoCenter;
+
+double _pushUpMaxTravel = 0;
+double _pushUpMaxArmBend = 0;
+
+  JumpingJackPhase _jumpingJackPhase =
+    JumpingJackPhase.waitingForClosed;
 
   int _jumpingJackConfirmationFrames = 0;
   bool _jumpingJackArmsOpened = false;
@@ -335,10 +425,23 @@ class WorkoutPoseAnalyzer {
     _pushUpTopTorsoCenters.clear();
     _pushUpTopTorsoNormals.clear();
     _pushUpTopTorsoLengths.clear();
+
+    _pushUpAnchorTorsoCenters.clear();
+    _pushUpAnchorTorsoNormals.clear();
+    _pushUpAnchorTorsoLengths.clear();
+    _pushUpAnchorElbowBaselines.clear();
+    _pushUpAnchorUpperArmBaselines.clear();
+    _pushUpAnchorLocked.clear();
+    _pushUpAnchorDisagreementFrames.clear();
+
     _pushUpSmoothedElbowAngle = null;
     _pushUpSmoothedTorsoCenter = null;
+
     _pushUpMaxTravel = 0;
     _pushUpMaxArmBend = 0;
+
+    _pushUpMaxAnchorTravel = null;
+    _pushUpMaxAnchorArmBend = null;
 
     resetRepPhase();
   }
@@ -384,6 +487,8 @@ class WorkoutPoseAnalyzer {
     _pushUpCycleStartedAt = null;
     _pushUpMaxTravel = 0;
     _pushUpMaxArmBend = 0;
+    _pushUpMaxAnchorTravel = null;
+_pushUpMaxAnchorArmBend = null;
     _pushUpSmoothedElbowAngle = null;
     _pushUpSmoothedTorsoCenter = null;
     _pushUpSwitchCandidateRight = null;
@@ -455,12 +560,11 @@ class WorkoutPoseAnalyzer {
     );
   }
 
-  /// Public synthetic-landmark entry point used by deterministic unit tests.
-  /// Positions are normalized to the camera image (0..1).
-  ///
-  /// Synthetic tests do not have Google's 33-landmark 3D [Pose], so they keep
-  /// using the legacy deterministic Push-up tracker. Real camera poses go
-  /// through Google's k-NN classification path above.
+  /// Public synthetic-landmark entry point used by deterministic tests.
+///
+/// Real camera poses and synthetic landmark tests both feed the same
+/// exercise-specific tracking logic after landmark normalization.
+
   WorkoutPoseObservation analyzeLandmarks(
     Map<PoseLandmarkType, WorkoutLandmark> landmarks, {
     required DateTime timestamp,
@@ -700,9 +804,30 @@ WorkoutPoseObservation _analyzeLandmarks(
   double get _pushUpReturnTravelTolerance => _lerp(0.055, 0.09, sensitivity);
   double get _pushUpFallbackTopTolerance => _lerp(9, 15, sensitivity);
   double get _pushUpFallbackMinArmDelta => _lerp(22, 14, sensitivity);
-  double get _pushUpSupportPerpendicularMin => _lerp(0.58, 0.42, sensitivity);
-  double get _pushUpSupportReachMin => _lerp(0.46, 0.32, sensitivity);
-  double get _pushUpSupportHeightMin => _lerp(0.24, 0.17, sensitivity);
+  double get _pushUpSupportPerpendicularMin =>
+      _lerp(0.58, 0.42, sensitivity);
+
+  double get _pushUpSupportReachMin =>
+      _lerp(0.46, 0.32, sensitivity);
+
+  double get _pushUpSupportHeightMin =>
+      _lerp(0.24, 0.17, sensitivity);
+
+  // Shoulder -> elbow fallback.
+  //
+  // These are smaller than the wrist thresholds because
+  // shoulder -> elbow is a shorter limb segment.
+  double get _pushUpElbowPerpendicularMin =>
+      _lerp(0.50, 0.36, sensitivity);
+
+  double get _pushUpElbowReachMin =>
+      _lerp(0.20, 0.14, sensitivity);
+
+  double get _pushUpElbowSupportHeightMin =>
+      _lerp(0.11, 0.07, sensitivity);
+
+  double get _pushUpElbowMinimumReach =>
+      _lerp(0.24, 0.18, sensitivity);
 
   PushUpTrackedSide get _pushUpTrackedSide => switch (_pushUpTrackedRight) {
     true => PushUpTrackedSide.right,
@@ -712,9 +837,17 @@ WorkoutPoseObservation _analyzeLandmarks(
 
  
   _PushUpUpdate _updatePushUp(_PoseSample sample) {
-  const signalLossTolerance = Duration(milliseconds: 900);
-  const minimumRepDuration = Duration(milliseconds: 420);
-  const maximumRepDuration = Duration(seconds: 8);
+const signalLossTolerance =
+    Duration(milliseconds: 1000);
+
+// Prevent impossible jitter-reps without punishing
+// genuinely fast users.
+const minimumRepDuration =
+    Duration(milliseconds: 250);
+
+// Allow deliberately slow push-ups and paused reps.
+const maximumRepDuration =
+    Duration(seconds: 25);
   const topConfirmationFrames = 3;
   const bottomConfirmationFrames = 2;
   const returnConfirmationFrames = 2;
@@ -747,19 +880,58 @@ WorkoutPoseObservation _analyzeLandmarks(
                 : PoseLandmarkType.leftHip] ??
             hipCenter;
 
-  var torsoHorizontal = false;
+var torsoHorizontal = false;
+var torsoLengthVisible = false;
 
-  if (selectedArm != null && selectedHip != null) {
-    final torsoVector = selectedArm.shoulder - selectedHip;
+if (selectedArm != null && selectedHip != null) {
+  final visibleTorsoVector =
+      selectedArm.shoulder - selectedHip;
 
-    torsoHorizontal =
-        torsoVector.dx.abs() > torsoVector.dy.abs() * 0.55 &&
-        torsoVector.distance > 0.035;
-  }
+  torsoLengthVisible =
+      visibleTorsoVector.distance > 0.035;
 
-  final signalsAvailable = selectedArm != null && selectedHip != null;
-  final usableSignal = signalsAvailable && torsoHorizontal;
+  // Keep this only for debugging.
+  //
+  // It is NOT a hard requirement for push-up tracking anymore.
+  torsoHorizontal =
+      torsoLengthVisible &&
+      visibleTorsoVector.dx.abs() >
+          visibleTorsoVector.dy.abs() * 0.55;
+}
 
+final signalsAvailable =
+    selectedArm != null &&
+    selectedHip != null;
+
+final usableSignal =
+    signalsAvailable &&
+    torsoLengthVisible;
+
+
+// ============================================================
+// TORSO-ONLY PRESENCE DURING OCCLUSION
+// ============================================================
+//
+// THIS DOES NOT COUNT OR ADVANCE REPS.
+//
+// It only prevents a real in-progress rep from immediately being
+// thrown away when both elbows briefly disappear.
+
+final shoulderCenter =
+    _center(
+  points,
+  const [
+    PoseLandmarkType.leftShoulder,
+    PoseLandmarkType.rightShoulder,
+  ],
+);
+
+final torsoOnlyTrackable =
+    shoulderCenter != null &&
+    hipCenter != null &&
+    (shoulderCenter - hipCenter)
+            .distance >
+        0.035;
   final previousUsableSignalAt = _lastPushUpUsableSignalAt;
 
   if (usableSignal) {
@@ -772,43 +944,84 @@ WorkoutPoseObservation _analyzeLandmarks(
       ? Duration.zero
       : sample.timestamp.difference(previousUsableSignalAt);
 
-  if (!usableSignal) {
-    if (previousUsableSignalAt != null &&
-        missingFor > signalLossTolerance) {
-      _resetPushUpPhase();
-    }
+if (!usableSignal) {
+  final effectiveTolerance =
+      _pushUpCycleStartedAt != null &&
+              torsoOnlyTrackable
+          ? signalLossTolerance * 2
+          : signalLossTolerance;
 
-    return _PushUpUpdate(
-      repCounted: false,
-      poseValid: false,
-      exerciseActive: _pushUpPhase != PushUpPhase.waitingForTop,
-      signalsAvailable: signalsAvailable,
-      ready: false,
-      debug: PushUpDebugData(
-        poseDetected: true,
-        signalsAvailable: signalsAvailable,
-        trackedSide: _pushUpTrackedSide,
-        shoulderConfidence: selectedArm?.shoulderConfidence,
-        elbowConfidence: selectedArm?.elbowConfidence,
-        wristConfidence: selectedArm?.wristConfidence,
-        elbowAngle: selectedArm?.angle,
-        leftElbowAngle: leftArm?.angle,
-        rightElbowAngle: rightArm?.angle,
-        torsoHorizontal: torsoHorizontal,
-        bodyAlignmentAngle: _pushUpBodyAlignment(points, selectedArm),
-        topCandidate: false,
-        bottomCandidate: false,
-        phase: _pushUpPhase,
-        signalMissingMilliseconds: math.max(
-          0,
-          missingFor.inMilliseconds,
-        ),
-        repCounted: false,
-        topThreshold: _pushUpTopThreshold,
-        bottomThreshold: _pushUpBottomThreshold,
-      ),
-    );
+  if (previousUsableSignalAt != null &&
+      missingFor >
+          effectiveTolerance) {
+    _resetPushUpPhase();
   }
+
+  return _PushUpUpdate(
+    repCounted: false,
+    poseValid: false,
+    exerciseActive:
+        _pushUpPhase !=
+        PushUpPhase.waitingForTop,
+    signalsAvailable: signalsAvailable,
+    ready: false,
+
+    debug: PushUpDebugData(
+      poseDetected: true,
+      signalsAvailable: signalsAvailable,
+      trackedSide: _pushUpTrackedSide,
+
+      shoulderConfidence:
+          selectedArm?.shoulderConfidence,
+
+      elbowConfidence:
+          selectedArm?.elbowConfidence,
+
+      wristConfidence:
+          selectedArm?.wristConfidence,
+
+      elbowAngle:
+          selectedArm?.angle,
+
+      leftElbowAngle:
+          leftArm?.angle,
+
+      rightElbowAngle:
+          rightArm?.angle,
+
+      torsoHorizontal:
+          torsoHorizontal,
+
+      bodyAlignmentAngle:
+          _pushUpBodyAlignment(
+        points,
+        selectedArm,
+      ),
+
+      topCandidate: false,
+      bottomCandidate: false,
+
+      phase: _pushUpPhase,
+
+      signalMissingMilliseconds:
+          math.max(
+        0,
+        missingFor.inMilliseconds,
+      ),
+
+      repCounted: false,
+
+      topThreshold:
+          _pushUpTopThreshold,
+
+      bottomThreshold:
+          _pushUpBottomThreshold,
+
+      torsoOnlyTrackable:
+          torsoOnlyTrackable,
+    ),
+  );
+}
 
   final activeArm = selectedArm;
   final activeHip = selectedHip;
@@ -864,37 +1077,140 @@ WorkoutPoseObservation _analyzeLandmarks(
     activeArm.elbow,
   );
 
-  double? supportPerpendicularity;
-  double? supportReachRatio;
-  var trustedSupport = false;
+// ============================================================
+// PUSH-UP SUPPORT EVIDENCE
+// ============================================================
+//
+// Wrist is optional.
+// Evidence that the body is actually supported is NOT optional.
 
-  final wrist = activeArm.wrist;
+// ------------------------------------------------------------
+// ELBOW / NON-WRIST SUPPORT
+// ------------------------------------------------------------
 
-  if (wrist != null) {
-    final shoulderToWrist = wrist - activeArm.shoulder;
-    final reach = shoulderToWrist.distance;
+final shoulderToElbow =
+    activeArm.elbow - activeArm.shoulder;
 
-    if (reach > 0.01) {
-      final armUnit = Offset(
-        shoulderToWrist.dx / reach,
-        shoulderToWrist.dy / reach,
-      );
+final elbowReachDistance =
+    shoulderToElbow.distance;
 
-      supportPerpendicularity =
-          (armUnit.dx * torsoNormal.dx +
-                  armUnit.dy * torsoNormal.dy)
-              .abs();
+final shoulderElbowReach =
+    elbowReachDistance / torsoLength;
 
-      supportReachRatio = reach / torsoLength;
+double? elbowPerpendicularity;
+double? elbowSupportScore;
 
-      trustedSupport =
-          supportPerpendicularity >=
-              _pushUpSupportPerpendicularMin &&
-          supportReachRatio >= _pushUpSupportReachMin &&
-          supportPerpendicularity * supportReachRatio >=
-              _pushUpSupportHeightMin;
-    }
+if (elbowReachDistance > 0.01) {
+  final elbowUnit = Offset(
+    shoulderToElbow.dx / elbowReachDistance,
+    shoulderToElbow.dy / elbowReachDistance,
+  );
+
+  // Measure relative to the torso instead of raw screen direction.
+  //
+  // Hand rotation does not affect this.
+  // Portrait/landscape does not inherently affect this.
+  elbowPerpendicularity =
+      (elbowUnit.dx * torsoNormal.dx +
+              elbowUnit.dy * torsoNormal.dy)
+          .abs();
+
+  elbowSupportScore =
+      elbowPerpendicularity *
+      shoulderElbowReach;
+}
+
+final elbowGeometrySupported =
+    elbowPerpendicularity != null &&
+    elbowPerpendicularity >=
+        _pushUpElbowPerpendicularMin &&
+    shoulderElbowReach >=
+        _pushUpElbowReachMin &&
+    elbowSupportScore != null &&
+    elbowSupportScore >=
+        _pushUpElbowSupportHeightMin;
+
+final elbowHasReach =
+    shoulderElbowReach >=
+        _pushUpElbowMinimumReach;
+
+final bodyAlignment =
+    _pushUpBodyAlignment(
+  points,
+  activeArm,
+);
+
+// Alignment is a veto, NOT proof.
+//
+// A straight body may still be lying flat,
+// so alignment alone must never establish support.
+final plausibleBodyAlignment =
+    bodyAlignment == null ||
+    bodyAlignment >= 120.0;
+
+final nonWristSupportEvidence =
+    plausibleBodyAlignment &&
+    elbowGeometrySupported &&
+    elbowHasReach;
+
+
+// ------------------------------------------------------------
+// WRIST SUPPORT
+// ------------------------------------------------------------
+
+var wristSupportEvidence = false;
+
+final wrist = activeArm.wrist;
+
+if (wrist != null) {
+  final shoulderToWrist =
+      wrist - activeArm.shoulder;
+
+  final reach =
+      shoulderToWrist.distance;
+
+  if (reach > 0.01) {
+    final armUnit = Offset(
+      shoulderToWrist.dx / reach,
+      shoulderToWrist.dy / reach,
+    );
+
+    final supportPerpendicularity =
+        (armUnit.dx * torsoNormal.dx +
+                armUnit.dy * torsoNormal.dy)
+            .abs();
+
+    final supportReachRatio =
+        reach / torsoLength;
+
+    wristSupportEvidence =
+        supportPerpendicularity >=
+                _pushUpSupportPerpendicularMin &&
+            supportReachRatio >=
+                _pushUpSupportReachMin &&
+            supportPerpendicularity *
+                    supportReachRatio >=
+                _pushUpSupportHeightMin;
   }
+}
+
+
+// ------------------------------------------------------------
+// FINAL SUPPORT DECISION
+// ------------------------------------------------------------
+//
+// Either route can establish support.
+//
+// Therefore:
+//
+// wrist visible + good geometry -> yes
+// wrist absent + good elbow geometry -> yes
+// weird hand rotation + good elbow geometry -> yes
+// neither arm geometry looks supported -> no
+
+final supportEvidence =
+    wristSupportEvidence ||
+    nonWristSupportEvidence;
 
   final side = activeArm.right;
 
@@ -943,41 +1259,112 @@ WorkoutPoseObservation _analyzeLandmarks(
       ? null
       : (upperArmAngle - upperArmTopBaseline).abs();
 
-  // Initial readiness is intentionally stricter than repetition tracking.
-  // We briefly require one trustworthy wrist-visible support arm so lying on
-  // the belly with flat arms cannot be calibrated as the top of a push-up.
-  final trustedTopPose =
-      elbowAngle != null &&
-      elbowAngle >= _pushUpTopThreshold &&
-      trustedSupport;
+// ============================================================
+// SLOW-ANCHOR TORSO TRAVEL
+// ============================================================
 
-  final baselineReady =
-      topElbowBaseline != null &&
-      upperArmTopBaseline != null &&
-      topTorsoCenter != null &&
-      topTorsoNormal != null &&
-      topTorsoLength != null;
+double? anchorTravel;
 
-  final returnArmReady = baselineReady
-      ? elbowAngle != null
+final anchorTorsoCenter =
+    _pushUpAnchorTorsoCenters[side];
+
+final anchorTorsoNormal =
+    _pushUpAnchorTorsoNormals[side];
+
+final anchorTorsoLength =
+    _pushUpAnchorTorsoLengths[side];
+
+if (anchorTorsoCenter != null &&
+    anchorTorsoNormal != null &&
+    anchorTorsoLength != null &&
+    anchorTorsoLength > 0.02) {
+  final anchorDelta =
+      torsoCenter -
+      anchorTorsoCenter;
+
+  final anchorPerpendicularTravel =
+      (anchorDelta.dx *
+                  anchorTorsoNormal.dx +
+              anchorDelta.dy *
+                  anchorTorsoNormal.dy)
+          .abs();
+
+  anchorTravel =
+      anchorPerpendicularTravel /
+      anchorTorsoLength;
+}
+
+final anchorElbowBaseline =
+    _pushUpAnchorElbowBaselines[side];
+
+final anchorUpperArmBaseline =
+    _pushUpAnchorUpperArmBaselines[side];
+
+final double? anchorElbowBend =
+    elbowAngle != null &&
+            anchorElbowBaseline != null
+        ? math.max(
+            0.0,
+            anchorElbowBaseline -
+                elbowAngle,
+          )
+        : null;
+
+final double? anchorUpperArmDelta =
+    anchorUpperArmBaseline != null
+        ? (upperArmAngle -
+                anchorUpperArmBaseline)
+            .abs()
+        : null;
+  // The user's natural top position may have a slightly bent elbow,
+  // unusual arm angle, hidden wrist, rotated hand, etc.
+  //
+  // What remains mandatory is evidence that the body is actually
+  // supported rather than merely horizontal.
+
+final naturalTopPose =
+    usableSignal;
+
+// Wrist-derived elbow angle is useful but optional.
+//
+// Upper-arm + torso information is enough for the normal
+// wristless tracking path.
+final baselineReady =
+    upperArmTopBaseline != null &&
+    topTorsoCenter != null &&
+    topTorsoNormal != null &&
+    topTorsoLength != null;
+
+final returnArmReady = baselineReady
+    ? (
+        elbowAngle != null &&
+                topElbowBaseline != null
             ? elbowAngle >=
                 topElbowBaseline -
                     _pushUpTopReturnTolerance
             : fallbackArmDelta != null &&
                 fallbackArmDelta <=
                     _pushUpFallbackTopTolerance
-      : trustedTopPose;
+      )
+    : naturalTopPose;
 
-  final returnTravelReady =
-      baselineReady && torsoTravel != null
-      ? torsoTravel <=
-          _pushUpReturnTravelTolerance
-      : trustedTopPose;
+final returnTravelReady =
+    baselineReady &&
+            torsoTravel != null
+        ? torsoTravel <=
+            _pushUpReturnTravelTolerance
+        : naturalTopPose;
 
-  final topCandidate =
-      _pushUpPhase == PushUpPhase.waitingForTop
-      ? trustedTopPose
-      : returnArmReady && returnTravelReady;
+final topCandidate =
+    _pushUpPhase ==
+            PushUpPhase.waitingForTop
+        ? naturalTopPose
+        : returnArmReady &&
+            returnTravelReady &&
+            (
+              supportEvidence ||
+              _pushUpCycleStartedAt != null
+            );
 
   final fullBottomCandidate =
       torsoTravel != null &&
@@ -985,16 +1372,21 @@ WorkoutPoseObservation _analyzeLandmarks(
       torsoTravel >= _pushUpMinTorsoTravel &&
       fullArmBend >= _pushUpMinArmBend;
 
-  // Wrist-less tracking may continue an already-started repetition,
-  // but it can never create a repetition from rest.
-  final fallbackBottomCandidate =
-      _pushUpCycleStartedAt != null &&
-      elbowAngle == null &&
-      torsoTravel != null &&
-      fallbackArmDelta != null &&
-      torsoTravel >= _pushUpMinTorsoTravel &&
-      fallbackArmDelta >=
-          _pushUpFallbackMinArmDelta;
+// Weak wristless tracking may CONTINUE an already-established
+// repetition, but this weakest evidence path cannot independently
+// create one.
+//
+// Wristless reps can still begin through the stronger calibrated
+// torso + upper-arm descent logic.
+final fallbackBottomCandidate =
+    _pushUpCycleStartedAt != null &&
+    elbowAngle == null &&
+    torsoTravel != null &&
+    fallbackArmDelta != null &&
+    torsoTravel >=
+        _pushUpMinTorsoTravel &&
+    fallbackArmDelta >=
+        _pushUpFallbackMinArmDelta;
 
   final bottomCandidate =
       fullBottomCandidate ||
@@ -1008,84 +1400,194 @@ WorkoutPoseObservation _analyzeLandmarks(
   final travelEvidence =
       torsoTravel ?? 0.0;
 
-  final descentStarted =
-      baselineReady &&
-      ((travelEvidence >=
-                  _pushUpMinTorsoTravel * 0.30 &&
-              armBendEvidence >= 4.0) ||
-          (armBendEvidence >=
-                  _pushUpMinArmBend * 0.35 &&
-              travelEvidence >= 0.018));
+final descentStarted =
+    baselineReady &&
+    ((travelEvidence >=
+                _pushUpMinTorsoTravel * 0.30 &&
+            armBendEvidence >= 4.0) ||
+        (armBendEvidence >=
+                _pushUpMinArmBend * 0.35 &&
+            travelEvidence >= 0.018));
 
-  if (trustedTopPose &&
-      (_pushUpPhase ==
-              PushUpPhase.waitingForTop ||
-          _pushUpPhase ==
-              PushUpPhase.top) &&
-      _pushUpCycleStartedAt == null) {
-      _recordPushUpTopBaseline(
-      right: side,
-      elbowAngle: elbowAngle,
-      upperArmAngle: upperArmAngle,
-      torsoCenter: torsoCenter,
-      torsoNormal: torsoNormal,
-      torsoLength: torsoLength,
-    );
-  }
+
+// ============================================================
+// ADAPTIVE TOP BASELINE
+// ============================================================
+
+if (naturalTopPose &&
+    (_pushUpPhase ==
+            PushUpPhase.waitingForTop ||
+        _pushUpPhase ==
+            PushUpPhase.top) &&
+    _pushUpCycleStartedAt == null) {
+  _recordPushUpTopBaseline(
+    right: side,
+    elbowAngle: elbowAngle,
+    upperArmAngle: upperArmAngle,
+    torsoCenter: torsoCenter,
+    torsoNormal: torsoNormal,
+    torsoLength: torsoLength,
+  );
+  
+}
+
+
+// ============================================================
+// SLOW SESSION ANCHOR
+// ============================================================
+
+if (naturalTopPose &&
+    supportEvidence &&
+    _pushUpPhase ==
+        PushUpPhase.top &&
+    _pushUpCycleStartedAt == null) {
+  _slowlyAdaptPushUpAnchor(
+    right: side,
+    torsoCenter: torsoCenter,
+    torsoNormal: torsoNormal,
+    torsoLength: torsoLength,
+    upperArmAngle: upperArmAngle,
+    elbowAngle: elbowAngle,
+    
+  );
+}
+
 
   final previousPhase = _pushUpPhase;
 
   var repCounted = false;
 
-  void beginCycle() {
-    _pushUpCycleStartedAt ??=
-        sample.timestamp;
-
-    _pushUpMaxTravel = math.max(
-      _pushUpMaxTravel,
-      travelEvidence,
-    );
-
-    _pushUpMaxArmBend = math.max(
-      _pushUpMaxArmBend,
-      armBendEvidence,
+void trackAnchorEvidence() {
+  if (anchorTravel != null) {
+    _pushUpMaxAnchorTravel =
+        math.max(
+      _pushUpMaxAnchorTravel ?? 0,
+      anchorTravel,
     );
   }
 
-  void updateCycleEvidence() {
-    if (_pushUpCycleStartedAt == null) {
-      return;
-    }
-
-    _pushUpMaxTravel = math.max(
-      _pushUpMaxTravel,
-      travelEvidence,
+  if (anchorElbowBend != null) {
+    _pushUpMaxAnchorArmBend =
+        math.max(
+      _pushUpMaxAnchorArmBend ?? 0,
+      anchorElbowBend,
     );
-
-    _pushUpMaxArmBend = math.max(
-      _pushUpMaxArmBend,
-      armBendEvidence,
+  } else if (anchorUpperArmDelta != null) {
+    _pushUpMaxAnchorArmBend =
+        math.max(
+      _pushUpMaxAnchorArmBend ?? 0,
+      anchorUpperArmDelta,
     );
   }
+}
 
-  bool cycleCanCount() {
-    final started =
-        _pushUpCycleStartedAt;
+void beginCycle() {
+  _pushUpCycleStartedAt ??=
+      sample.timestamp;
 
-    if (started == null) {
-      return false;
-    }
+  _pushUpMaxTravel =
+      math.max(
+    _pushUpMaxTravel,
+    travelEvidence,
+  );
 
-    final duration =
-        sample.timestamp.difference(started);
+  _pushUpMaxArmBend =
+      math.max(
+    _pushUpMaxArmBend,
+    armBendEvidence,
+  );
 
-    return duration >= minimumRepDuration &&
-        duration <= maximumRepDuration &&
-        _pushUpMaxTravel >=
-            _pushUpMinTorsoTravel &&
-        _pushUpMaxArmBend >=
-            _pushUpMinArmBend;
+  trackAnchorEvidence();
+}
+
+void updateCycleEvidence() {
+  if (_pushUpCycleStartedAt == null) {
+    return;
   }
+
+  _pushUpMaxTravel =
+      math.max(
+    _pushUpMaxTravel,
+    travelEvidence,
+  );
+
+  _pushUpMaxArmBend =
+      math.max(
+    _pushUpMaxArmBend,
+    armBendEvidence,
+  );
+
+  trackAnchorEvidence();
+}
+
+bool cycleCanCount() {
+  final started =
+      _pushUpCycleStartedAt;
+
+  if (started == null) {
+    return false;
+  }
+
+  final duration =
+      sample.timestamp.difference(
+    started,
+  );
+
+  // ==========================================================
+  // ADAPTIVE PER-REP EVIDENCE
+  // ==========================================================
+
+  final adaptiveTravelReached =
+      _pushUpMaxTravel >=
+          _pushUpMinTorsoTravel;
+
+  final adaptiveArmReached =
+      _pushUpMaxArmBend >=
+          _pushUpMinArmBend;
+
+  // ==========================================================
+  // SLOW ANCHOR — TORSO
+  // ==========================================================
+
+  final anchorTravelReached =
+      _pushUpMaxAnchorTravel == null ||
+      _pushUpMaxAnchorTravel! >=
+          _pushUpMinTorsoTravel *
+              0.55;
+
+  // ==========================================================
+  // SLOW ANCHOR — ARM
+  // ==========================================================
+
+  final hasRealElbowAnchor =
+      anchorElbowBaseline != null;
+
+  final anchorArmReached =
+      _pushUpMaxAnchorArmBend == null ||
+      (
+        hasRealElbowAnchor
+            ? _pushUpMaxAnchorArmBend! >=
+                _pushUpMinArmBend *
+                    0.50
+            : _pushUpMaxAnchorArmBend! >=
+                _pushUpFallbackMinArmDelta *
+                    0.50
+      );
+
+  // Rep must have actually reached the target/bottom state.
+  final sequenceCompleted =
+      _cycleTargetReached;
+
+  return duration >=
+          minimumRepDuration &&
+      duration <=
+          maximumRepDuration &&
+      adaptiveTravelReached &&
+      adaptiveArmReached &&
+      anchorTravelReached &&
+      anchorArmReached &&
+      sequenceCompleted;
+}
 
   void finishAtTop({
     required bool count,
@@ -1099,12 +1601,16 @@ WorkoutPoseObservation _analyzeLandmarks(
     _pushUpCycleStartedAt = null;
     _pushUpMaxTravel = 0;
     _pushUpMaxArmBend = 0;
+
+    _pushUpMaxAnchorTravel = null;
+    _pushUpMaxAnchorArmBend = null;
+
     _cycleTargetReached = false;
   }
 
   switch (_pushUpPhase) {
     case PushUpPhase.waitingForTop:
-      if (trustedTopPose) {
+      if (naturalTopPose) {
         _pushUpConfirmationFrames++;
 
         if (_pushUpConfirmationFrames >=
@@ -1116,11 +1622,18 @@ WorkoutPoseObservation _analyzeLandmarks(
           _pushUpCycleStartedAt = null;
           _pushUpMaxTravel = 0;
           _pushUpMaxArmBend = 0;
+          _pushUpMaxAnchorTravel = null;
+          _pushUpMaxAnchorArmBend = null;
+          
           _cycleTargetReached = false;
         }
-      } else {
-        _pushUpConfirmationFrames = 0;
-      }
+        } else {
+    _pushUpConfirmationFrames =
+        math.max(
+      0,
+      _pushUpConfirmationFrames - 1,
+    );
+  }
 
     case PushUpPhase.top:
       if (bottomCandidate) {
@@ -1227,14 +1740,11 @@ WorkoutPoseObservation _analyzeLandmarks(
       }
   }
 
-  final bodyAlignment =
-      _pushUpBodyAlignment(
-    points,
-    activeArm,
-  );
 
-  final exerciseActive =
-      repCounted ||
+
+
+final exerciseActive =
+    repCounted ||
       previousPhase != _pushUpPhase ||
       _pushUpCycleStartedAt != null ||
       _pushUpPhase ==
@@ -1244,18 +1754,33 @@ WorkoutPoseObservation _analyzeLandmarks(
       _pushUpPhase ==
           PushUpPhase.ascending;
 
-  final ready =
-      _pushUpPhase == PushUpPhase.top &&
-      baselineReady &&
-      returnArmReady &&
-      returnTravelReady;
+final ready =
+    _pushUpPhase ==
+        PushUpPhase.top &&
+    baselineReady &&
+    usableSignal;
 
   return _PushUpUpdate(
     repCounted: repCounted,
-    poseValid: torsoHorizontal,
-    exerciseActive: exerciseActive,
-    signalsAvailable: true,
-    ready: ready,
+
+    // Torso does not have to look perfectly horizontal on screen.
+    //
+    // Support evidence is orientation-relative.
+    poseValid:
+        signalsAvailable &&
+        (
+          supportEvidence ||
+          _pushUpCycleStartedAt != null
+        ),
+
+    exerciseActive:
+        exerciseActive,
+
+    signalsAvailable:
+        true,
+
+    ready:
+        ready,
     debug: PushUpDebugData(
       poseDetected: true,
       signalsAvailable: true,
@@ -1287,7 +1812,37 @@ WorkoutPoseObservation _analyzeLandmarks(
       topThreshold:
           _pushUpTopThreshold,
       bottomThreshold:
-          _pushUpBottomThreshold,
+    _pushUpBottomThreshold,
+
+    wristSupportEvidence:
+        wristSupportEvidence,
+
+    nonWristSupportEvidence:
+        nonWristSupportEvidence,
+
+    elbowPerpendicularity:
+        elbowPerpendicularity,
+
+    elbowSupportScore:
+        elbowSupportScore,
+
+    anchorTravel:
+        anchorTravel,
+
+    maxAnchorTravel:
+        _pushUpMaxAnchorTravel,
+
+    anchorElbowBend:
+        anchorElbowBend,
+
+    anchorUpperArmDelta:
+        anchorUpperArmDelta,
+
+    maxAnchorArmBend:
+        _pushUpMaxAnchorArmBend,
+
+    torsoOnlyTrackable:
+        torsoOnlyTrackable,
     ),
   );
 }
@@ -1331,11 +1886,12 @@ WorkoutPoseObservation _analyzeLandmarks(
     final averageCoreConfidence =
         (shoulderConfidence + elbowConfidence) / 2;
 
+    // Shoulder + elbow determine tracking quality.
+    //
+    // Wrist is additional measurement data, not a requirement.
     final score =
-        weakestCoreConfidence * 0.60 +
-        averageCoreConfidence * 0.30 +
-        (wristConfidence ?? 0) * 0.10 +
-        (wrist == null ? 0.0 : 0.12);
+        weakestCoreConfidence * 0.70 +
+        averageCoreConfidence * 0.30;
 
     return _PushUpArmSample(
       right: right,
@@ -1363,21 +1919,22 @@ WorkoutPoseObservation _analyzeLandmarks(
     };
 
       if (tracked == null) {
-      _PushUpArmSample? replacement;
+  _PushUpArmSample? replacement;
 
-      // Prefer a complete wrist-visible arm when possible, while still
-      // allowing shoulder/elbow fallback arms.
-      if (left?.hasWrist == true && right?.hasWrist != true) {
-        replacement = left;
-      } else if (right?.hasWrist == true && left?.hasWrist != true) {
-        replacement = right;
-      } else if (left == null) {
-        replacement = right;
-      } else if (right == null) {
-        replacement = left;
-      } else {
-        replacement = right.score > left.score ? right : left;
-      }
+  // Wrist visibility does not determine whether an arm is useful.
+  //
+  // Use whichever shoulder/elbow side currently has the better
+  // tracking quality.
+  if (left == null) {
+    replacement = right;
+  } else if (right == null) {
+    replacement = left;
+  } else {
+    replacement =
+        right.score > left.score
+            ? right
+            : left;
+  }
 
       if (replacement != null) {
         _pushUpTrackedRight = replacement.right;
@@ -1419,14 +1976,97 @@ WorkoutPoseObservation _analyzeLandmarks(
     return tracked;
   }
 
-  void _recordPushUpTopBaseline({
+
+void _slowlyAdaptPushUpAnchor({
   required bool right,
-  required double elbowAngle,
+  required Offset torsoCenter,
+  required Offset torsoNormal,
+  required double torsoLength,
+  required double upperArmAngle,
+  required double? elbowAngle,
+}) {
+  if (_pushUpAnchorLocked[right] != true) {
+    return;
+  }
+
+  // Much slower than the adaptive top baseline.
+  const alpha = 0.02;
+
+  final oldCenter =
+      _pushUpAnchorTorsoCenters[right];
+
+  if (oldCenter != null) {
+    _pushUpAnchorTorsoCenters[right] =
+        Offset(
+      oldCenter.dx * (1 - alpha) +
+          torsoCenter.dx * alpha,
+      oldCenter.dy * (1 - alpha) +
+          torsoCenter.dy * alpha,
+    );
+  }
+
+  final oldLength =
+      _pushUpAnchorTorsoLengths[right];
+
+  if (oldLength != null) {
+    _pushUpAnchorTorsoLengths[right] =
+        oldLength * (1 - alpha) +
+        torsoLength * alpha;
+  }
+
+  final oldUpperArm =
+      _pushUpAnchorUpperArmBaselines[right];
+
+  if (oldUpperArm != null) {
+    _pushUpAnchorUpperArmBaselines[right] =
+        oldUpperArm * (1 - alpha) +
+        upperArmAngle * alpha;
+  }
+
+  if (elbowAngle != null) {
+    final oldElbow =
+        _pushUpAnchorElbowBaselines[right];
+
+    if (oldElbow != null) {
+      _pushUpAnchorElbowBaselines[right] =
+          oldElbow * (1 - alpha) +
+          elbowAngle * alpha;
+    }
+  }
+
+  final oldNormal =
+      _pushUpAnchorTorsoNormals[right];
+
+  if (oldNormal != null) {
+    final blended = Offset(
+      oldNormal.dx * (1 - alpha) +
+          torsoNormal.dx * alpha,
+      oldNormal.dy * (1 - alpha) +
+          torsoNormal.dy * alpha,
+    );
+
+    final normalLength =
+        blended.distance;
+
+    if (normalLength > 0.0001) {
+      _pushUpAnchorTorsoNormals[right] =
+          Offset(
+        blended.dx / normalLength,
+        blended.dy / normalLength,
+      );
+    }
+  }
+}
+
+void _recordPushUpTopBaseline({
+  required bool right,
+  required double? elbowAngle,
   required double upperArmAngle,
   required Offset torsoCenter,
   required Offset torsoNormal,
   required double torsoLength,
 }) {
+
   final samples =
       _pushUpUpperArmBaselineSamples[right] ?? 0;
 
@@ -1455,11 +2095,17 @@ WorkoutPoseObservation _analyzeLandmarks(
               current.dy * alpha,
         );
 
+// Only maintain an elbow-angle baseline when the wrist exists
+// strongly enough to calculate one.
+//
+// Missing wrist must not stop torso/upper-arm calibration.
+if (elbowAngle != null) {
   _pushUpTopElbowBaselines[right] =
       blend(
     _pushUpTopElbowBaselines[right],
     elbowAngle,
   );
+}
 
   _pushUpUpperArmTopBaselines[right] =
       blend(
@@ -1498,9 +2144,118 @@ WorkoutPoseObservation _analyzeLandmarks(
               normalLength,
         );
 
-  _pushUpUpperArmBaselineSamples[right] =
-      math.min(samples + 1, 30);
+final updatedSamples =
+    math.min(samples + 1, 30);
+
+_pushUpUpperArmBaselineSamples[right] =
+    updatedSamples;
+
+
+// ============================================================
+// INITIAL ANCHOR
+// ============================================================
+//
+// Do not trust the first frame.
+// Let the adaptive top baseline settle first.
+
+if (_pushUpAnchorLocked[right] != true &&
+    updatedSamples >= 3) {
+  final adaptiveCenter =
+      _pushUpTopTorsoCenters[right];
+
+  final adaptiveNormal =
+      _pushUpTopTorsoNormals[right];
+
+  final adaptiveLength =
+      _pushUpTopTorsoLengths[right];
+
+  final adaptiveUpperArm =
+      _pushUpUpperArmTopBaselines[right];
+
+  if (adaptiveCenter != null &&
+      adaptiveNormal != null &&
+      adaptiveLength != null &&
+      adaptiveUpperArm != null) {
+    _pushUpAnchorTorsoCenters[right] =
+        adaptiveCenter;
+
+    _pushUpAnchorTorsoNormals[right] =
+        adaptiveNormal;
+
+    _pushUpAnchorTorsoLengths[right] =
+        adaptiveLength;
+
+    _pushUpAnchorUpperArmBaselines[right] =
+        adaptiveUpperArm;
+
+    final adaptiveElbow =
+        _pushUpTopElbowBaselines[right];
+
+    if (adaptiveElbow != null) {
+      _pushUpAnchorElbowBaselines[right] =
+          adaptiveElbow;
+    }
+
+    _pushUpAnchorLocked[right] = true;
+
+    _pushUpAnchorDisagreementFrames[right] =
+        0;
+  }
 }
+
+
+// ============================================================
+// EARLY BAD-ANCHOR RECOVERY
+// ============================================================
+//
+// If the first anchor was based on a bad/noisy calibration,
+// allow it to reopen only after several consecutive top samples
+// disagree with it.
+
+if (_pushUpAnchorLocked[right] == true &&
+    updatedSamples <= 8) {
+  final adaptiveLength =
+      _pushUpTopTorsoLengths[right];
+
+  final anchorLength =
+      _pushUpAnchorTorsoLengths[right];
+
+  if (adaptiveLength != null &&
+      anchorLength != null &&
+      anchorLength > 0.02) {
+    final disagreement =
+        (adaptiveLength - anchorLength)
+                .abs() /
+            anchorLength;
+
+    if (disagreement > 0.25) {
+      _pushUpAnchorDisagreementFrames[right] =
+          (_pushUpAnchorDisagreementFrames[right] ?? 0) + 1;
+    } else {
+      _pushUpAnchorDisagreementFrames[right] = 0;
+    }
+
+    if ((_pushUpAnchorDisagreementFrames[right] ?? 0) >= 3) {
+      _pushUpAnchorLocked[right] = false;
+
+      _pushUpAnchorTorsoCenters.remove(right);
+      _pushUpAnchorTorsoNormals.remove(right);
+      _pushUpAnchorTorsoLengths.remove(right);
+
+      _pushUpAnchorElbowBaselines.remove(right);
+      _pushUpAnchorUpperArmBaselines.remove(right);
+
+      _pushUpAnchorDisagreementFrames[right] = 0;
+    }
+  }
+}
+
+// closes _recordPushUpTopBaseline()
+}
+
+
+
+
 
   double? _pushUpBodyAlignment(
     Map<PoseLandmarkType, Offset> points,
@@ -1530,6 +2285,9 @@ WorkoutPoseObservation _analyzeLandmarks(
     _pushUpCycleStartedAt = null;
     _pushUpMaxTravel = 0;
     _pushUpMaxArmBend = 0;
+    _pushUpMaxAnchorTravel = null;
+    _pushUpMaxAnchorArmBend = null;
+  
     _pushUpSmoothedElbowAngle = null;
     _pushUpSmoothedTorsoCenter = null;
     _cycleTargetReached = false;
