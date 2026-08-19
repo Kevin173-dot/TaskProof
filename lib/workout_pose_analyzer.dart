@@ -287,8 +287,17 @@ class WorkoutPoseAnalyzer {
   });
 
   static const double landmarkConfidenceThreshold = 0.45;
-  static const double pushUpLandmarkConfidenceThreshold = 0.30;
   static const double jumpingJackLandmarkConfidenceThreshold = 0.30;
+
+  // Push-up landmark confidence hysteresis.
+  static const double _pushUpAcquireConfidence = 0.30;
+  static const double _pushUpKeepConfidence = 0.16;
+
+  // Briefly preserve an already-tracked push-up landmark through
+  // confidence flicker or short self-occlusion.
+  static const Duration _pushUpLandmarkPersistence =
+      Duration(milliseconds: 320);
+
   static const double _minimumJumpingJackHipWidth = 0.010;
   static const int _jumpingJackBaselineSampleTarget = 5;
 
@@ -300,10 +309,16 @@ class WorkoutPoseAnalyzer {
  
 
   double get _landmarkConfidenceThreshold => switch (exercise) {
-    WorkoutExercise.pushUps => pushUpLandmarkConfidenceThreshold,
+    WorkoutExercise.pushUps => _pushUpAcquireConfidence,
     WorkoutExercise.jumpingJacks => jumpingJackLandmarkConfidenceThreshold,
     _ => landmarkConfidenceThreshold,
   };
+
+  // Temporal landmark tracking.
+  final Map<PoseLandmarkType, Offset> _smoothedLandmarkPositions = {};
+  final Map<PoseLandmarkType, double> _smoothedLandmarkConfidences = {};
+  final Map<PoseLandmarkType, DateTime> _lastReliableLandmarkAt = {};
+  DateTime? _lastSmoothedAt;
 
   _PoseSample? _previous;
   bool _cycleStarted = false;
@@ -319,7 +334,18 @@ class WorkoutPoseAnalyzer {
   DateTime? _lastPrecisionRepSignalsAt;
 
   PushUpPhase _pushUpPhase = PushUpPhase.waitingForTop;
+
+  // Time-based push-up phase confirmation. Frame-count-only confirmation
+  // behaves differently at 10 FPS and 30 FPS, so TaskProof confirms phases
+  // using elapsed time plus a minimum number of actual fresh samples.
   int _pushUpConfirmationFrames = 0;
+  DateTime? _pushUpTopCandidateSince;
+  DateTime? _pushUpLastTopCandidateAt;
+  DateTime? _pushUpBottomCandidateSince;
+  DateTime? _pushUpLastBottomCandidateAt;
+  DateTime? _pushUpReturnCandidateSince;
+  DateTime? _pushUpLastReturnCandidateAt;
+
   DateTime? _lastPushUpUsableSignalAt;
   DateTime? _pushUpCycleStartedAt;
   bool? _pushUpTrackedRight;
@@ -402,7 +428,22 @@ double _pushUpMaxArmBend = 0;
           exercise == WorkoutExercise.sitUps ||
           exercise == WorkoutExercise.lunges);
 
+  void _clearPushUpConfirmations() {
+    _pushUpConfirmationFrames = 0;
+    _pushUpTopCandidateSince = null;
+    _pushUpLastTopCandidateAt = null;
+    _pushUpBottomCandidateSince = null;
+    _pushUpLastBottomCandidateAt = null;
+    _pushUpReturnCandidateSince = null;
+    _pushUpLastReturnCandidateAt = null;
+  }
+
   void reset() {
+    _smoothedLandmarkPositions.clear();
+    _smoothedLandmarkConfidences.clear();
+    _lastReliableLandmarkAt.clear();
+    _lastSmoothedAt = null;
+
  
 
     _jumpingJackKneeBaselines.clear();
@@ -413,7 +454,7 @@ double _pushUpMaxArmBend = 0;
     _lastPrecisionRepSignalsAt = null;
 
     _pushUpPhase = PushUpPhase.waitingForTop;
-    _pushUpConfirmationFrames = 0;
+    _clearPushUpConfirmations();
     _lastPushUpUsableSignalAt = null;
     _pushUpCycleStartedAt = null;
     _pushUpTrackedRight = null;
@@ -482,7 +523,7 @@ double _pushUpMaxArmBend = 0;
       _pushUpPhase = pushUpWasReady
         ? PushUpPhase.top
         : PushUpPhase.waitingForTop;
-    _pushUpConfirmationFrames = 0;
+    _clearPushUpConfirmations();
     _lastPushUpUsableSignalAt = pushUpWasReady ? pushUpSignalsAt : null;
     _pushUpCycleStartedAt = null;
     _pushUpMaxTravel = 0;
@@ -508,49 +549,93 @@ _pushUpMaxAnchorArmBend = null;
     required Size imageSize,
     required DateTime timestamp,
   }) {
-    if (imageSize.width <= 0 || imageSize.height <= 0 || poses.isEmpty) {
+    if (imageSize.width <= 0 || imageSize.height <= 0) {
+      return _absent(timestamp: timestamp);
+    }
+
+    // For push-ups, a one-frame complete pose dropout should not immediately
+    // destroy a track that was healthy a moment ago. Feeding an empty landmark
+    // set into _analyzeLandmarks lets the per-joint persistence layer decide
+    // whether there is still recent trustworthy information.
+    if (poses.isEmpty) {
+      if (exercise == WorkoutExercise.pushUps &&
+          _smoothedLandmarkPositions.isNotEmpty) {
+        return _analyzeLandmarks(
+          const <PoseLandmarkType, WorkoutLandmark>{},
+          timestamp: timestamp,
+        );
+      }
+
       return _absent(timestamp: timestamp);
     }
 
     final minimumLandmarks =
         exercise == WorkoutExercise.pushUps ? 3 : 4;
 
+    // Brand-new push-up tracks use acquire confidence. Existing tracks can
+    // survive weaker frames so the temporal tracker can preserve joints.
+    final poseSelectionThreshold =
+        exercise == WorkoutExercise.pushUps
+            ? (_smoothedLandmarkPositions.isEmpty
+                ? _pushUpAcquireConfidence
+                : _pushUpKeepConfidence)
+            : _landmarkConfidenceThreshold;
+
     Map<PoseLandmarkType, WorkoutLandmark>? best;
-    Pose? bestPose;
     var bestScore = -1.0;
+
     for (final pose in poses) {
       final landmarks = <PoseLandmarkType, WorkoutLandmark>{};
-      var confidence = 0.0;
+      var qualifyingLandmarks = 0;
+      var confidenceScore = 0.0;
+
       for (final entry in pose.landmarks.entries) {
         final landmark = entry.value;
-        if (landmark.likelihood < _landmarkConfidenceThreshold) {
-          continue;
-        }
+
         final point = Offset(
           landmark.x / imageSize.width,
           landmark.y / imageSize.height,
         );
+
         if (point.dx < -0.08 ||
             point.dx > 1.08 ||
             point.dy < -0.08 ||
             point.dy > 1.08) {
           continue;
         }
+
+        // Keep raw observations even when confidence is weak. The temporal
+        // tracker must see them to apply acquire/keep hysteresis correctly.
         landmarks[entry.key] = WorkoutLandmark(
           point,
           confidence: landmark.likelihood,
         );
-        confidence += landmark.likelihood;
+
+        if (landmark.likelihood >= poseSelectionThreshold) {
+          qualifyingLandmarks++;
+          confidenceScore += landmark.likelihood;
+        }
       }
-      final score = landmarks.length * 10 + confidence;
-      if (landmarks.length >= minimumLandmarks && score > bestScore) {
+
+      final score = qualifyingLandmarks * 10 + confidenceScore;
+
+      if (qualifyingLandmarks >= minimumLandmarks && score > bestScore) {
         best = landmarks;
-        bestPose = pose;
         bestScore = score;
       }
     }
 
-    if (best == null || bestPose == null) {
+    // If we already have a push-up track, allow short persistence to bridge
+    // a bad whole-pose frame. This cannot originate a new track.
+    if (best == null) {
+      if (exercise == WorkoutExercise.pushUps &&
+          _smoothedLandmarkPositions.isNotEmpty) {
+        return _analyzeLandmarks(
+          const <PoseLandmarkType, WorkoutLandmark>{},
+          timestamp: timestamp,
+        );
+      }
+
       return _absent(timestamp: timestamp);
     }
 
@@ -576,28 +661,121 @@ WorkoutPoseObservation _analyzeLandmarks(
   Map<PoseLandmarkType, WorkoutLandmark> landmarks, {
   required DateTime timestamp,
 }) {
-       final confident = <PoseLandmarkType, Offset>{};
-        final confidences = <PoseLandmarkType, double>{};
+  final confident = <PoseLandmarkType, Offset>{};
+  final confidences = <PoseLandmarkType, double>{};
 
-        for (final entry in landmarks.entries) {
-          if (entry.value.confidence >= _landmarkConfidenceThreshold) {
-            confident[entry.key] = entry.value.position;
-            confidences[entry.key] = entry.value.confidence;
-          }
+  // Landmarks in this set came from the CURRENT ML Kit frame and passed
+  // hysteresis. Persisted landmarks are intentionally excluded so stale
+  // coordinates may preserve an in-progress rep but can never originate or
+  // advance a movement phase.
+  final freshLandmarks = <PoseLandmarkType>{};
+
+  const maxSmoothingGap = Duration(milliseconds: 500);
+
+  final gapTooLarge =
+      _lastSmoothedAt == null ||
+      timestamp.difference(_lastSmoothedAt!) > maxSmoothingGap;
+
+  _lastSmoothedAt = timestamp;
+
+  if (gapTooLarge) {
+    _smoothedLandmarkPositions.clear();
+    _smoothedLandmarkConfidences.clear();
+    _lastReliableLandmarkAt.clear();
+  }
+
+  final isPushUp = exercise == WorkoutExercise.pushUps;
+
+  // Process current ML Kit observations.
+  for (final entry in landmarks.entries) {
+    final key = entry.key;
+    final observation = entry.value;
+
+    final previousSmoothed = _smoothedLandmarkPositions[key];
+    final alreadyTracked =
+        previousSmoothed != null && _lastReliableLandmarkAt[key] != null;
+
+    final requiredConfidence =
+        isPushUp
+            ? (alreadyTracked
+                ? _pushUpKeepConfidence
+                : _pushUpAcquireConfidence)
+            : _landmarkConfidenceThreshold;
+
+    if (observation.confidence < requiredConfidence) {
+      continue;
+    }
+
+    final raw = observation.position;
+    final confidenceWeight = observation.confidence.clamp(0.0, 1.0);
+
+    // High-confidence observations catch up quickly; weak observations
+    // influence the smoothed point less, reducing one-frame jitter.
+    final smoothingAlpha =
+        isPushUp ? 0.35 + confidenceWeight * 0.35 : 1.0;
+
+    final smoothed = previousSmoothed == null
+        ? raw
+        : Offset(
+            previousSmoothed.dx * (1 - smoothingAlpha) +
+                raw.dx * smoothingAlpha,
+            previousSmoothed.dy * (1 - smoothingAlpha) +
+                raw.dy * smoothingAlpha,
+          );
+
+    _smoothedLandmarkPositions[key] = smoothed;
+    _smoothedLandmarkConfidences[key] = observation.confidence;
+    _lastReliableLandmarkAt[key] = timestamp;
+
+    confident[key] = smoothed;
+    confidences[key] = observation.confidence;
+    freshLandmarks.add(key);
+  }
+
+  // Brief push-up landmark persistence.
+  if (isPushUp && !gapTooLarge) {
+    for (final key in _smoothedLandmarkPositions.keys.toList()) {
+      if (confident.containsKey(key)) {
+        continue;
+      }
+
+      final lastReliable = _lastReliableLandmarkAt[key];
+
+      if (lastReliable == null) {
+        continue;
+      }
+
+      final age = timestamp.difference(lastReliable);
+
+      if (age <= _pushUpLandmarkPersistence) {
+        final position = _smoothedLandmarkPositions[key];
+
+        if (position != null) {
+          confident[key] = position;
+          confidences[key] =
+              _smoothedLandmarkConfidences[key] ?? _pushUpKeepConfidence;
         }
+      } else {
+        _smoothedLandmarkPositions.remove(key);
+        _smoothedLandmarkConfidences.remove(key);
+        _lastReliableLandmarkAt.remove(key);
+      }
+    }
+  }
 
-        final minimumLandmarks =
-        exercise == WorkoutExercise.pushUps ? 3 : 4;
+  final minimumLandmarks =
+      exercise == WorkoutExercise.pushUps ? 3 : 4;
 
-        if (confident.length < minimumLandmarks) {
-          return _absent(timestamp: timestamp);
-        }
+  if (confident.length < minimumLandmarks) {
+    return _absent(timestamp: timestamp);
+  }
 
-        final sample = _PoseSample.from(
-          confident,
-          timestamp,
-          confidences: confidences,
-        );
+  final sample = _PoseSample.from(
+    confident,
+    timestamp,
+    confidences: confidences,
+    freshLandmarks: freshLandmarks,
+  );
 
         final coverage = _coverage(sample.landmarks);
 
@@ -848,18 +1026,27 @@ const minimumRepDuration =
 // Allow deliberately slow push-ups and paused reps.
 const maximumRepDuration =
     Duration(seconds: 25);
-  const topConfirmationFrames = 3;
-  const bottomConfirmationFrames = 2;
-  const returnConfirmationFrames = 2;
+
+  // Confirmation is time-based so behavior is stable across devices/FPS.
+  const topConfirmationDuration = Duration(milliseconds: 180);
+  const bottomConfirmationDuration = Duration(milliseconds: 100);
+  const returnConfirmationDuration = Duration(milliseconds: 120);
+  const candidateGapGrace = Duration(milliseconds: 90);
+  const minimumConfirmationSamples = 2;
 
   final points = sample.landmarks;
   final confidences = sample.confidences;
+  final fresh = sample.freshLandmarks;
 
   final leftArm = _pushUpArm(points, confidences, right: false);
   final rightArm = _pushUpArm(points, confidences, right: true);
 
   final trackedBeforeSelection = _pushUpTrackedRight;
-  final selectedArm = _selectPushUpArm(leftArm, rightArm);
+  final selectedArm = _selectPushUpArm(
+    leftArm,
+    rightArm,
+    freshLandmarks: fresh,
+  );
 
   if (selectedArm != null && trackedBeforeSelection != selectedArm.right) {
     // A side change can move the measured shoulder several pixels even when
@@ -879,6 +1066,38 @@ const maximumRepDuration =
                 ? PoseLandmarkType.rightHip
                 : PoseLandmarkType.leftHip] ??
             hipCenter;
+
+  final selectedShoulderType = selectedArm == null
+      ? null
+      : (selectedArm.right
+          ? PoseLandmarkType.rightShoulder
+          : PoseLandmarkType.leftShoulder);
+  final selectedElbowType = selectedArm == null
+      ? null
+      : (selectedArm.right
+          ? PoseLandmarkType.rightElbow
+          : PoseLandmarkType.leftElbow);
+  final selectedHipType = selectedArm == null
+      ? null
+      : (selectedArm.right
+          ? PoseLandmarkType.rightHip
+          : PoseLandmarkType.leftHip);
+
+  final selectedCoreFresh =
+      selectedShoulderType != null &&
+      selectedElbowType != null &&
+      fresh.contains(selectedShoulderType) &&
+      fresh.contains(selectedElbowType);
+
+  final selectedHipFresh =
+      (selectedHipType != null && fresh.contains(selectedHipType)) ||
+      fresh.contains(PoseLandmarkType.leftHip) ||
+      fresh.contains(PoseLandmarkType.rightHip);
+
+  // Persisted coordinates may preserve state, but ONLY current-frame
+  // shoulder + elbow + hip evidence may originate/advance a push-up phase.
+  final freshMovementSignal =
+      selectedCoreFresh && selectedHipFresh;
 
 var torsoHorizontal = false;
 var torsoLengthVisible = false;
@@ -1324,6 +1543,7 @@ final double? anchorUpperArmDelta =
 
 final naturalTopPose =
     usableSignal &&
+    freshMovementSignal &&
     supportEvidence;
 // Wrist-derived elbow angle is useful but optional.
 //
@@ -1359,7 +1579,8 @@ final topCandidate =
     _pushUpPhase ==
             PushUpPhase.waitingForTop
         ? naturalTopPose
-        : returnArmReady &&
+        : freshMovementSignal &&
+            returnArmReady &&
             returnTravelReady &&
             (
               supportEvidence ||
@@ -1367,6 +1588,7 @@ final topCandidate =
             );
 
   final fullBottomCandidate =
+      freshMovementSignal &&
       torsoTravel != null &&
       fullArmBend != null &&
       torsoTravel >= _pushUpMinTorsoTravel &&
@@ -1379,6 +1601,7 @@ final topCandidate =
 // Wristless reps can still begin through the stronger calibrated
 // torso + upper-arm descent logic.
 final fallbackBottomCandidate =
+    freshMovementSignal &&
     _pushUpCycleStartedAt != null &&
     elbowAngle == null &&
     torsoTravel != null &&
@@ -1401,6 +1624,7 @@ final fallbackBottomCandidate =
       torsoTravel ?? 0.0;
 
 final descentStarted =
+    freshMovementSignal &&
     baselineReady &&
     ((travelEvidence >=
                 _pushUpMinTorsoTravel * 0.30 &&
@@ -1501,7 +1725,7 @@ void beginCycle() {
 }
 
 void updateCycleEvidence() {
-  if (_pushUpCycleStartedAt == null) {
+  if (_pushUpCycleStartedAt == null || !freshMovementSignal) {
     return;
   }
 
@@ -1597,7 +1821,7 @@ bool cycleCanCount() {
     _pushUpPhase =
         PushUpPhase.top;
 
-    _pushUpConfirmationFrames = 0;
+    _clearPushUpConfirmations();
     _pushUpCycleStartedAt = null;
     _pushUpMaxTravel = 0;
     _pushUpMaxArmBend = 0;
@@ -1611,82 +1835,107 @@ bool cycleCanCount() {
   switch (_pushUpPhase) {
     case PushUpPhase.waitingForTop:
       if (naturalTopPose) {
-        _pushUpConfirmationFrames++;
+        final gap = _pushUpLastTopCandidateAt == null
+            ? null
+            : sample.timestamp.difference(_pushUpLastTopCandidateAt!);
 
-        if (_pushUpConfirmationFrames >=
-            topConfirmationFrames) {
-          _pushUpPhase =
-              PushUpPhase.top;
+        if (_pushUpTopCandidateSince == null ||
+            gap == null ||
+            gap > candidateGapGrace) {
+          _pushUpTopCandidateSince = sample.timestamp;
+          _pushUpConfirmationFrames = 1;
+        } else {
+          _pushUpConfirmationFrames++;
+        }
 
-          _pushUpConfirmationFrames = 0;
+        _pushUpLastTopCandidateAt = sample.timestamp;
+
+        final stableFor =
+            sample.timestamp.difference(_pushUpTopCandidateSince!);
+
+        if (_pushUpConfirmationFrames >= minimumConfirmationSamples &&
+            stableFor >= topConfirmationDuration) {
+          _pushUpPhase = PushUpPhase.top;
+          _clearPushUpConfirmations();
           _pushUpCycleStartedAt = null;
           _pushUpMaxTravel = 0;
           _pushUpMaxArmBend = 0;
           _pushUpMaxAnchorTravel = null;
           _pushUpMaxAnchorArmBend = null;
-          
           _cycleTargetReached = false;
         }
-        } else {
-    _pushUpConfirmationFrames =
-        math.max(
-      0,
-      _pushUpConfirmationFrames - 1,
-    );
-  }
+      } else if (_pushUpLastTopCandidateAt == null ||
+          sample.timestamp.difference(_pushUpLastTopCandidateAt!) >
+              candidateGapGrace) {
+        _pushUpTopCandidateSince = null;
+        _pushUpLastTopCandidateAt = null;
+        _pushUpConfirmationFrames = 0;
+      }
 
     case PushUpPhase.top:
+      _pushUpBottomCandidateSince = null;
+      _pushUpLastBottomCandidateAt = null;
+      _pushUpReturnCandidateSince = null;
+      _pushUpLastReturnCandidateAt = null;
+      _pushUpConfirmationFrames = 0;
+
       if (bottomCandidate) {
         beginCycle();
-
-        _pushUpPhase =
-            PushUpPhase.bottom;
-
-        _pushUpConfirmationFrames = 0;
+        _pushUpPhase = PushUpPhase.bottom;
         _cycleTargetReached = true;
       } else if (descentStarted) {
         beginCycle();
-
-        _pushUpPhase =
-            PushUpPhase.descending;
-
-        _pushUpConfirmationFrames = 0;
+        _pushUpPhase = PushUpPhase.descending;
       }
 
     case PushUpPhase.descending:
       updateCycleEvidence();
 
-      final started =
-          _pushUpCycleStartedAt;
+      final started = _pushUpCycleStartedAt;
 
       if (started != null &&
-          sample.timestamp.difference(started) >
-              maximumRepDuration) {
+          sample.timestamp.difference(started) > maximumRepDuration) {
         _resetPushUpPhase();
       } else if (bottomCandidate) {
         final strongBottom =
-            travelEvidence >=
-                    _pushUpMinTorsoTravel *
-                        1.30 &&
-                armBendEvidence >=
-                    _pushUpMinArmBend *
-                        1.20;
+            travelEvidence >= _pushUpMinTorsoTravel * 1.30 &&
+            armBendEvidence >= _pushUpMinArmBend * 1.20;
 
-        _pushUpConfirmationFrames++;
+        final gap = _pushUpLastBottomCandidateAt == null
+            ? null
+            : sample.timestamp.difference(_pushUpLastBottomCandidateAt!);
+
+        if (_pushUpBottomCandidateSince == null ||
+            gap == null ||
+            gap > candidateGapGrace) {
+          _pushUpBottomCandidateSince = sample.timestamp;
+          _pushUpConfirmationFrames = 1;
+        } else {
+          _pushUpConfirmationFrames++;
+        }
+
+        _pushUpLastBottomCandidateAt = sample.timestamp;
+
+        final stableFor =
+            sample.timestamp.difference(_pushUpBottomCandidateSince!);
 
         if (strongBottom ||
-            _pushUpConfirmationFrames >=
-                bottomConfirmationFrames) {
-          _pushUpPhase =
-              PushUpPhase.bottom;
-
+            (_pushUpConfirmationFrames >= minimumConfirmationSamples &&
+                stableFor >= bottomConfirmationDuration)) {
+          _pushUpPhase = PushUpPhase.bottom;
           _pushUpConfirmationFrames = 0;
+          _pushUpBottomCandidateSince = null;
+          _pushUpLastBottomCandidateAt = null;
           _cycleTargetReached = true;
         }
       } else if (topCandidate) {
-        // A shallow dip that returns to the top is not a rep.
+        // A shallow dip that returns to top is not a rep.
         finishAtTop(count: false);
-      } else {
+      } else if (_pushUpLastBottomCandidateAt == null ||
+          sample.timestamp.difference(_pushUpLastBottomCandidateAt!) >
+              candidateGapGrace) {
+        _pushUpBottomCandidateSince = null;
+        _pushUpLastBottomCandidateAt = null;
         _pushUpConfirmationFrames = 0;
       }
 
@@ -1694,52 +1943,85 @@ bool cycleCanCount() {
       updateCycleEvidence();
 
       if (topCandidate) {
-        _pushUpConfirmationFrames++;
+        final gap = _pushUpLastReturnCandidateAt == null
+            ? null
+            : sample.timestamp.difference(_pushUpLastReturnCandidateAt!);
 
-        if (_pushUpConfirmationFrames >=
-            returnConfirmationFrames) {
-          finishAtTop(
-            count: cycleCanCount(),
-          );
+        if (_pushUpReturnCandidateSince == null ||
+            gap == null ||
+            gap > candidateGapGrace) {
+          _pushUpReturnCandidateSince = sample.timestamp;
+          _pushUpConfirmationFrames = 1;
+        } else {
+          _pushUpConfirmationFrames++;
+        }
+
+        _pushUpLastReturnCandidateAt = sample.timestamp;
+
+        final stableFor =
+            sample.timestamp.difference(_pushUpReturnCandidateSince!);
+
+        if (_pushUpConfirmationFrames >= minimumConfirmationSamples &&
+            stableFor >= returnConfirmationDuration) {
+          finishAtTop(count: cycleCanCount());
         }
       } else if (!bottomCandidate) {
-        _pushUpPhase =
-            PushUpPhase.ascending;
-
+        _pushUpPhase = PushUpPhase.ascending;
         _pushUpConfirmationFrames = 0;
-      } else {
+        _pushUpReturnCandidateSince = null;
+        _pushUpLastReturnCandidateAt = null;
+      } else if (_pushUpLastReturnCandidateAt == null ||
+          sample.timestamp.difference(_pushUpLastReturnCandidateAt!) >
+              candidateGapGrace) {
+        _pushUpReturnCandidateSince = null;
+        _pushUpLastReturnCandidateAt = null;
         _pushUpConfirmationFrames = 0;
       }
 
     case PushUpPhase.ascending:
       updateCycleEvidence();
 
-      final started =
-          _pushUpCycleStartedAt;
+      final started = _pushUpCycleStartedAt;
 
       if (started != null &&
-          sample.timestamp.difference(started) >
-              maximumRepDuration) {
+          sample.timestamp.difference(started) > maximumRepDuration) {
         _resetPushUpPhase();
       } else if (bottomCandidate) {
-        _pushUpPhase =
-            PushUpPhase.bottom;
-
+        _pushUpPhase = PushUpPhase.bottom;
         _pushUpConfirmationFrames = 0;
+        _pushUpReturnCandidateSince = null;
+        _pushUpLastReturnCandidateAt = null;
       } else if (topCandidate) {
-        _pushUpConfirmationFrames++;
+        final gap = _pushUpLastReturnCandidateAt == null
+            ? null
+            : sample.timestamp.difference(_pushUpLastReturnCandidateAt!);
 
-        if (_pushUpConfirmationFrames >=
-            returnConfirmationFrames) {
-          finishAtTop(
-            count: cycleCanCount(),
-          );
+        if (_pushUpReturnCandidateSince == null ||
+            gap == null ||
+            gap > candidateGapGrace) {
+          _pushUpReturnCandidateSince = sample.timestamp;
+          _pushUpConfirmationFrames = 1;
+        } else {
+          _pushUpConfirmationFrames++;
         }
-      } else {
+
+        _pushUpLastReturnCandidateAt = sample.timestamp;
+
+        final stableFor =
+            sample.timestamp.difference(_pushUpReturnCandidateSince!);
+
+        if (_pushUpConfirmationFrames >= minimumConfirmationSamples &&
+            stableFor >= returnConfirmationDuration) {
+          finishAtTop(count: cycleCanCount());
+        }
+      } else if (_pushUpLastReturnCandidateAt == null ||
+          sample.timestamp.difference(_pushUpLastReturnCandidateAt!) >
+              candidateGapGrace) {
+        _pushUpReturnCandidateSince = null;
+        _pushUpLastReturnCandidateAt = null;
         _pushUpConfirmationFrames = 0;
       }
   }
-
 
 
 
@@ -1908,33 +2190,52 @@ final ready =
     );
   }
 
+  bool _pushUpSideFresh(
+    Set<PoseLandmarkType> freshLandmarks,
+    bool right,
+  ) {
+    final shoulder = right
+        ? PoseLandmarkType.rightShoulder
+        : PoseLandmarkType.leftShoulder;
+    final elbow = right
+        ? PoseLandmarkType.rightElbow
+        : PoseLandmarkType.leftElbow;
+
+    final anyFreshHip =
+        freshLandmarks.contains(PoseLandmarkType.leftHip) ||
+        freshLandmarks.contains(PoseLandmarkType.rightHip);
+
+    return freshLandmarks.contains(shoulder) &&
+        freshLandmarks.contains(elbow) &&
+        anyFreshHip;
+  }
+
+  bool _pushUpSideHasBaseline(bool right) {
+    return _pushUpUpperArmTopBaselines[right] != null &&
+        _pushUpTopTorsoCenters[right] != null &&
+        _pushUpTopTorsoNormals[right] != null &&
+        _pushUpTopTorsoLengths[right] != null;
+  }
+
   _PushUpArmSample? _selectPushUpArm(
     _PushUpArmSample? left,
-    _PushUpArmSample? right,
-  ) {
+    _PushUpArmSample? right, {
+    required Set<PoseLandmarkType> freshLandmarks,
+  }) {
     _PushUpArmSample? tracked = switch (_pushUpTrackedRight) {
       true => right,
       false => left,
       null => null,
     };
 
-      if (tracked == null) {
-  _PushUpArmSample? replacement;
+    _PushUpArmSample? bestAvailable() {
+      if (left == null) return right;
+      if (right == null) return left;
+      return right.score > left.score ? right : left;
+    }
 
-  // Wrist visibility does not determine whether an arm is useful.
-  //
-  // Use whichever shoulder/elbow side currently has the better
-  // tracking quality.
-  if (left == null) {
-    replacement = right;
-  } else if (right == null) {
-    replacement = left;
-  } else {
-    replacement =
-        right.score > left.score
-            ? right
-            : left;
-  }
+    if (tracked == null) {
+      final replacement = bestAvailable();
 
       if (replacement != null) {
         _pushUpTrackedRight = replacement.right;
@@ -1942,18 +2243,48 @@ final ready =
 
       _pushUpSwitchCandidateRight = null;
       _pushUpSwitchCandidateFrames = 0;
-
       return replacement;
     }
 
     final alternate = tracked.right ? left : right;
 
+    final trackedFresh =
+        _pushUpSideFresh(freshLandmarks, tracked.right);
+    final alternateFresh =
+        alternate != null &&
+        _pushUpSideFresh(freshLandmarks, alternate.right);
+
+    final activeRep =
+        _pushUpPhase == PushUpPhase.descending ||
+        _pushUpPhase == PushUpPhase.bottom ||
+        _pushUpPhase == PushUpPhase.ascending;
+
+    // Safe mid-rep handoff:
+    // - the currently tracked arm has genuinely gone stale,
+    // - the opposite shoulder/elbow/hip are fresh NOW,
+    // - the opposite side already owns a learned top baseline.
+    //
+    // This avoids fabricating a new baseline while the user is halfway down.
+    if (activeRep &&
+        !trackedFresh &&
+        alternate != null &&
+        alternateFresh &&
+        _pushUpSideHasBaseline(alternate.right)) {
+      _pushUpTrackedRight = alternate.right;
+      _pushUpSwitchCandidateRight = null;
+      _pushUpSwitchCandidateFrames = 0;
+      return alternate;
+    }
+
+    // Outside an active repetition we can improve the chosen side gradually
+    // when the alternate is clearly better for several frames.
     final safeToImproveSelection =
         _pushUpPhase == PushUpPhase.waitingForTop ||
         _pushUpPhase == PushUpPhase.top;
 
     if (safeToImproveSelection &&
         alternate != null &&
+        alternateFresh &&
         alternate.score >= tracked.score + 0.16) {
       if (_pushUpSwitchCandidateRight == alternate.right) {
         _pushUpSwitchCandidateFrames++;
@@ -2280,7 +2611,7 @@ if (_pushUpAnchorLocked[right] == true &&
 
   void _resetPushUpPhase() {
     _pushUpPhase = PushUpPhase.waitingForTop;
-    _pushUpConfirmationFrames = 0;
+    _clearPushUpConfirmations();
     _lastPushUpUsableSignalAt = null;
     _pushUpCycleStartedAt = null;
     _pushUpMaxTravel = 0;
@@ -3302,6 +3633,7 @@ class _PoseSample {
   const _PoseSample({
     required this.landmarks,
     required this.confidences,
+    required this.freshLandmarks,
     required this.timestamp,
     required this.center,
     required this.bounds,
@@ -3312,6 +3644,7 @@ class _PoseSample {
     Map<PoseLandmarkType, Offset> landmarks,
     DateTime timestamp, {
     Map<PoseLandmarkType, double> confidences = const {},
+    Set<PoseLandmarkType>? freshLandmarks,
   }) {
     final torso = <Offset>[];
     for (final type in const [
@@ -3357,6 +3690,9 @@ class _PoseSample {
       return _PoseSample(
       landmarks: landmarks,
       confidences: confidences,
+      freshLandmarks: Set<PoseLandmarkType>.unmodifiable(
+        freshLandmarks ?? landmarks.keys.toSet(),
+      ),
       timestamp: timestamp,
       center: center,
       bounds: bounds,
@@ -3366,6 +3702,7 @@ class _PoseSample {
 
   final Map<PoseLandmarkType, Offset> landmarks;
   final Map<PoseLandmarkType, double> confidences;
+  final Set<PoseLandmarkType> freshLandmarks;
   final DateTime timestamp;
   final Offset center;
   final Rect bounds;
