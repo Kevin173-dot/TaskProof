@@ -1352,7 +1352,7 @@ final returnTravelReady =
     baselineReady &&
             torsoTravel != null
         ? torsoTravel <=
-            _pushUpReturnTravelTolerance
+            _pushUpReturnTravelTolerance * 1.75
         : naturalTopPose;
 
 final topCandidate =
