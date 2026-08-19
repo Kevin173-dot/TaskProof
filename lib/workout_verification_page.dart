@@ -49,6 +49,9 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
       Duration(milliseconds: 850);
   static const _pushUpCountdownGrace =
       Duration(milliseconds: 900);
+
+  static const _pushUpReadinessLossGrace =
+      Duration(milliseconds: 650);
   static const _jumpingJackReadinessGrace =
       Duration(milliseconds: 950);
   static const bool _showWorkoutDebug = false;
@@ -95,6 +98,7 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
   DateTime? _lastPersonSeen;
   DateTime? _lastJumpingJackSignalsSeen;
   DateTime? _readySince;
+  DateTime? _lastPushUpReadyAt;
   DateTime? _countdownStarted;
   DateTime? _pushUpCountdownUnreadySince;
   DateTime? _exerciseInvalidSince;
@@ -464,20 +468,43 @@ Future<void> _restorePortraitOrientation() async {
         return;
       }
 
-      _status = workoutCameraGuidance(_config.exercise, observation);
-      if (observation.cameraReady) {
-        _readySince ??= now;
-        final readyDuration = _resumeWarmup
-          ? const Duration(milliseconds: 400)
-          : _config.exercise == WorkoutExercise.pushUps
+_status = workoutCameraGuidance(
+  _config.exercise,
+  observation,
+);
+
+final isPushUp =
+    _config.exercise == WorkoutExercise.pushUps;
+
+if (observation.cameraReady) {
+  if (isPushUp) {
+    _lastPushUpReadyAt = now;
+  }
+
+  _readySince ??= now;
+
+  final readyDuration = _resumeWarmup
+      ? const Duration(milliseconds: 400)
+      : isPushUp
           ? _pushUpReadyDuration
           : _initialReadyDuration;
-        if (now.difference(_readySince!) >= readyDuration) {
-          _beginCountdown(resume: _resumeWarmup);
-        }
-      } else {
-        _readySince = null;
-      }
+
+  if (now.difference(_readySince!) >= readyDuration) {
+    _beginCountdown(
+      resume: _resumeWarmup,
+    );
+  }
+} else {
+  final recentlyReady =
+      isPushUp &&
+      _lastPushUpReadyAt != null &&
+      now.difference(_lastPushUpReadyAt!) <=
+          _pushUpReadinessLossGrace;
+
+  if (!recentlyReady) {
+    _readySince = null;
+  }
+}
       _refresh();
       return;
     }

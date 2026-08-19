@@ -1323,8 +1323,8 @@ final double? anchorUpperArmDelta =
   // supported rather than merely horizontal.
 
 final naturalTopPose =
-    usableSignal;
-
+    usableSignal &&
+    supportEvidence;
 // Wrist-derived elbow angle is useful but optional.
 //
 // Upper-arm + torso information is enough for the normal
