@@ -15,12 +15,14 @@ class WorkoutCameraPreviewPage extends StatefulWidget {
     required this.exercise,
     required this.movementType,
     required this.sensitivity,
+    required this.initialOrientation,
   });
 
   final bool isDarkMode;
   final WorkoutExercise exercise;
   final WorkoutMovementType movementType;
   final double sensitivity;
+  final WorkoutCameraOrientation initialOrientation;
 
   @override
   State<WorkoutCameraPreviewPage> createState() =>
@@ -33,6 +35,7 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
   static const _red = Color(0xFFFF101C);
   static const _analysisInterval = Duration(milliseconds: 100);
 
+late WorkoutCameraOrientation _selectedOrientation;
   late final WorkoutPoseAnalyzer _analyzer;
   PoseDetector? _detector;
   CameraController? _controller;
@@ -51,11 +54,14 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
   String _status = 'Step back so TaskProof can see you';
   String? _error;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _analyzer = WorkoutPoseAnalyzer(
+    @override
+    void initState() {
+      super.initState();
+      WidgetsBinding.instance.addObserver(this);
+
+      _selectedOrientation = widget.initialOrientation;
+
+      _analyzer = WorkoutPoseAnalyzer(
       exercise: widget.exercise,
       movementType: widget.movementType,
       sensitivity: widget.sensitivity,
@@ -83,6 +89,147 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
     unawaited(_disposeResources());
     super.dispose();
   }
+
+Future<void> _changeOrientation(
+  WorkoutCameraOrientation orientation,
+) async {
+  if (_selectedOrientation == orientation) {
+    return;
+  }
+
+  setState(() {
+    _selectedOrientation = orientation;
+  });
+
+  if (orientation == WorkoutCameraOrientation.landscape) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  } else {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+  }
+
+  await _stopCamera();
+
+  if (!_closing) {
+    await _startCamera();
+  }
+}
+
+Widget _buildOrientationSelector() {
+  final dark = widget.isDarkMode;
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Camera Orientation',
+        style: TextStyle(
+          color: dark ? Colors.white : const Color(0xFF191B20),
+          fontSize: 15,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 10),
+
+      Row(
+        children: [
+          Expanded(
+            child: _orientationButton(
+              label: 'Portrait',
+              icon: Icons.stay_current_portrait_rounded,
+              orientation: WorkoutCameraOrientation.portrait,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _orientationButton(
+              label: 'Landscape',
+              icon: Icons.stay_current_landscape_rounded,
+              orientation: WorkoutCameraOrientation.landscape,
+            ),
+          ),
+        ],
+      ),
+
+      if (widget.exercise == WorkoutExercise.pushUps) ...[
+        const SizedBox(height: 8),
+        const Text(
+          'Landscape is recommended for Push-ups so more of your body stays in frame.',
+          style: TextStyle(
+            color: Color(0xFF8B8E97),
+            fontSize: 12,
+          ),
+        ),
+      ],
+    ],
+  );
+}
+
+Widget _orientationButton({
+  required String label,
+  required IconData icon,
+  required WorkoutCameraOrientation orientation,
+}) {
+  final selected = _selectedOrientation == orientation;
+  final dark = widget.isDarkMode;
+
+  return InkWell(
+    borderRadius: BorderRadius.circular(14),
+    onTap: () => _changeOrientation(orientation),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      height: 52,
+      decoration: BoxDecoration(
+        color: selected
+            ? const Color(0xFFFF111C).withValues(alpha: 0.10)
+            : dark
+                ? const Color(0xFF18191D)
+                : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected
+              ? const Color(0xFFFF111C)
+              : dark
+                  ? const Color(0xFF303238)
+                  : const Color(0xFFD7D9DF),
+          width: selected ? 1.5 : 1,
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 20,
+            color: selected
+                ? const Color(0xFFFF111C)
+                : dark
+                    ? Colors.white70
+                    : const Color(0xFF555860),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              color: selected
+                  ? const Color(0xFFFF111C)
+                  : dark
+                      ? Colors.white
+                      : const Color(0xFF24262B),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -150,8 +297,12 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
         return;
       }
       try {
-        await local.lockCaptureOrientation(DeviceOrientation.portraitUp);
-      } catch (_) {}
+      await local.lockCaptureOrientation(
+        _selectedOrientation == WorkoutCameraOrientation.landscape
+            ? DeviceOrientation.landscapeLeft
+            : DeviceOrientation.portraitUp,
+      );
+    } catch (_) {}
       _camera = camera;
       _controller = local;
       await local.startImageStream(_onImage);
@@ -303,33 +454,38 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
   }
 
   @override
-  Widget build(BuildContext context) {
-    final background = widget.isDarkMode
-        ? const Color(0xFF090B0E)
-        : const Color(0xFFF3F4F6);
-    final foreground = widget.isDarkMode
-        ? Colors.white
-        : const Color(0xFF111318);
-    return Scaffold(
+Widget build(BuildContext context) {
+  final background = widget.isDarkMode
+      ? const Color(0xFF090B0E)
+      : const Color(0xFFF3F4F6);
+
+  final foreground = widget.isDarkMode
+      ? Colors.white
+      : const Color(0xFF111318);
+
+  return Scaffold(
+    backgroundColor: background,
+    appBar: AppBar(
       backgroundColor: background,
-      appBar: AppBar(
-        backgroundColor: background,
-        foregroundColor: foreground,
-        title: const Text('Workout Camera'),
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
-          child: Column(
-            children: [
-              Text(
-                workoutExerciseLabel(widget.exercise),
-                style: TextStyle(
-                  color: foreground,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                ),
+      foregroundColor: foreground,
+      title: const Text('Workout Camera'),
+    ),
+    body: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
+        child: Column(
+          children: [
+            _buildOrientationSelector(),
+            const SizedBox(height: 16),
+
+            Text(
+              workoutExerciseLabel(widget.exercise),
+              style: TextStyle(
+                color: foreground,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
               ),
+            ),
               const SizedBox(height: 10),
               Expanded(
                 child: ClipRRect(
@@ -383,6 +539,7 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
       ),
     );
   }
+
 
   Widget _cameraBody() {
     final controller = _controller;

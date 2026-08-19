@@ -83,6 +83,13 @@ enum WorkoutExercise {
   jumpRope,
 }
 
+enum WorkoutCameraOrientation {
+  portrait,
+  landscape,
+}
+WorkoutCameraOrientation workoutCameraOrientation =
+    WorkoutCameraOrientation.portrait;
+
 // =============================================================
 // REFERENCE POSE
 // =============================================================
@@ -169,6 +176,7 @@ class WorkoutTaskConfig {
     required this.targetDuration,
     required this.restLimit,
     required this.formChecking,
+    this.cameraOrientation = WorkoutCameraOrientation.portrait,
   });
 
   final WorkoutMovementType movementType;
@@ -181,6 +189,8 @@ class WorkoutTaskConfig {
   final Duration restLimit;
 
   final bool formChecking;
+
+  final WorkoutCameraOrientation cameraOrientation;
 }
 
 class TaskData {
@@ -3499,18 +3509,27 @@ Widget _buildReferenceSetup() {
           _showMessage('Workout camera preview requires Android or iPhone.');
           return;
         }
-        await Navigator.push<void>(
-          context,
-          MaterialPageRoute(
-            builder: (_) => WorkoutCameraPreviewPage(
-              isDarkMode: widget.isDarkMode,
-              exercise: selectedExercise,
-              movementType: workoutMovementType,
-              sensitivity: sensitivity,
-            ),
-          ),
-        );
-        return;
+        final selectedOrientation =
+        await Navigator.push<WorkoutCameraOrientation>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => WorkoutCameraPreviewPage(
+          isDarkMode: widget.isDarkMode,
+          exercise: selectedExercise,
+          movementType: workoutMovementType,
+          sensitivity: sensitivity,
+          initialOrientation: workoutCameraOrientation,
+        ),
+      ),
+    );
+
+    if (selectedOrientation != null && mounted) {
+      setState(() {
+        workoutCameraOrientation = selectedOrientation;
+      });
+    }
+
+    return;
 
       case TaskMode.focus:
         await _captureReferencePosition();
@@ -3917,16 +3936,17 @@ Widget _buildReferenceSetup() {
             )
           : null,
 
-      workoutConfig: selectedMode == TaskMode.workout
-          ? WorkoutTaskConfig(
-              movementType: workoutMovementType,
-              exercise: selectedExercise,
-              repGoal: workoutRepGoal,
-              targetDuration: workoutTargetDuration,
-              restLimit: workoutRestLimit,
-              formChecking: workoutFormChecking,
-            )
-          : null,
+        workoutConfig: selectedMode == TaskMode.workout
+      ? WorkoutTaskConfig(
+          movementType: workoutMovementType,
+          exercise: selectedExercise,
+          repGoal: workoutRepGoal,
+          targetDuration: workoutTargetDuration,
+          restLimit: workoutRestLimit,
+          formChecking: workoutFormChecking,
+          cameraOrientation: workoutCameraOrientation,
+        )
+      : null,
 
       status: scheduleEnabled ? TaskStatus.scheduled : TaskStatus.ready,
 

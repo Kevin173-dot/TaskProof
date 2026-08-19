@@ -8,6 +8,7 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'new_task_page.dart';
 import 'workout_pose_analyzer.dart';
 
+
 enum WorkoutSessionState {
   preparing,
   countdown,
@@ -117,6 +118,7 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
       throw StateError('Workout task is missing WorkoutTaskConfig.');
     }
     _config = config;
+      unawaited(_applySavedOrientation());
     _analyzer = WorkoutPoseAnalyzer(
       exercise: config.exercise,
       movementType: config.movementType,
@@ -130,14 +132,35 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
     unawaited(_initialize());
   }
 
+  Future<void> _applySavedOrientation() async {
+  if (_config.cameraOrientation ==
+      WorkoutCameraOrientation.landscape) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  } else {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+  }
+}
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _closing = true;
     _sessionTimer?.cancel();
     unawaited(_shutdown());
+    unawaited(_restorePortraitOrientation());
     super.dispose();
   }
+
+Future<void> _restorePortraitOrientation() async {
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
+}
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -228,7 +251,11 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
         return false;
       }
       try {
-        await local.lockCaptureOrientation(DeviceOrientation.portraitUp);
+        await local.lockCaptureOrientation(
+          _config.cameraOrientation == WorkoutCameraOrientation.landscape
+              ? DeviceOrientation.landscapeLeft
+              : DeviceOrientation.portraitUp,
+        );
       } catch (_) {}
       if (!_cameraStartCurrent(generation)) {
         await _disposeLocal(local);
@@ -915,9 +942,10 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
     final background = widget.isDarkMode
         ? const Color(0xFF090B0E)
         : const Color(0xFFF3F4F6);
+
     final foreground = widget.isDarkMode
         ? Colors.white
-        : const Color(0xFF101114);
+        : const Color(0xFF111318);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {

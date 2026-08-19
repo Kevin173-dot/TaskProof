@@ -249,6 +249,8 @@ class WorkoutPoseAnalyzer {
   final double sensitivity;
   final bool formChecking;
 
+ 
+
   double get _landmarkConfidenceThreshold => switch (exercise) {
     WorkoutExercise.pushUps => pushUpLandmarkConfidenceThreshold,
     WorkoutExercise.jumpingJacks => jumpingJackLandmarkConfidenceThreshold,
@@ -311,6 +313,8 @@ class WorkoutPoseAnalyzer {
           exercise == WorkoutExercise.lunges);
 
   void reset() {
+ 
+
     _jumpingJackKneeBaselines.clear();
     _jumpingJackHipYBaselines.clear();
 
@@ -342,6 +346,7 @@ class WorkoutPoseAnalyzer {
   /// Clears an in-progress repetition while preserving a confirmed starting
   /// position through the preparation -> countdown transition.
   void resetRepPhase() {
+
     final jumpingJackWasCalibratedClosed =
         _jumpingJackPhase == JumpingJackPhase.closed &&
         _jumpingJackBaselineReady;
@@ -406,6 +411,7 @@ class WorkoutPoseAnalyzer {
         exercise == WorkoutExercise.pushUps ? 3 : 4;
 
     Map<PoseLandmarkType, WorkoutLandmark>? best;
+    Pose? bestPose;
     var bestScore = -1.0;
     for (final pose in poses) {
       final landmarks = <PoseLandmarkType, WorkoutLandmark>{};
@@ -434,22 +440,38 @@ class WorkoutPoseAnalyzer {
       final score = landmarks.length * 10 + confidence;
       if (landmarks.length >= minimumLandmarks && score > bestScore) {
         best = landmarks;
+        bestPose = pose;
         bestScore = score;
       }
     }
 
-    if (best == null) {
+    if (best == null || bestPose == null) {
       return _absent(timestamp: timestamp);
     }
-    return analyzeLandmarks(best, timestamp: timestamp);
+
+    return _analyzeLandmarks(
+      best,
+      timestamp: timestamp,
+    );
   }
 
   /// Public synthetic-landmark entry point used by deterministic unit tests.
   /// Positions are normalized to the camera image (0..1).
+  ///
+  /// Synthetic tests do not have Google's 33-landmark 3D [Pose], so they keep
+  /// using the legacy deterministic Push-up tracker. Real camera poses go
+  /// through Google's k-NN classification path above.
   WorkoutPoseObservation analyzeLandmarks(
     Map<PoseLandmarkType, WorkoutLandmark> landmarks, {
     required DateTime timestamp,
   }) {
+    return _analyzeLandmarks(landmarks, timestamp: timestamp);
+  }
+
+WorkoutPoseObservation _analyzeLandmarks(
+  Map<PoseLandmarkType, WorkoutLandmark> landmarks, {
+  required DateTime timestamp,
+}) {
        final confident = <PoseLandmarkType, Offset>{};
         final confidences = <PoseLandmarkType, double>{};
 
@@ -507,8 +529,8 @@ class WorkoutPoseAnalyzer {
         _usesPrecisionRepTracker ||
         (coverage != WorkoutBodyCoverage.insufficient && !tooClose)) {
         switch (exercise) {
-          case WorkoutExercise.pushUps:
-          final update = _updatePushUp(sample);
+        case WorkoutExercise.pushUps:
+         final update = _updatePushUp(sample);
           repCounted = update.repCounted;
           poseValid = update.poseValid;
           precisionRepActivity = update.exerciseActive;
@@ -688,6 +710,7 @@ class WorkoutPoseAnalyzer {
     null => PushUpTrackedSide.none,
   };
 
+ 
   _PushUpUpdate _updatePushUp(_PoseSample sample) {
   const signalLossTolerance = Duration(milliseconds: 900);
   const minimumRepDuration = Duration(milliseconds: 420);
