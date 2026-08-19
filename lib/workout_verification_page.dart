@@ -40,7 +40,7 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
     with WidgetsBindingObserver {
   static const _red = Color(0xFFFF101C);
   static const _green = Color(0xFF22C55E);
-  static const _analysisInterval = Duration(milliseconds: 100);
+static const _analysisInterval = Duration.zero;
   static const _personLossGrace = Duration(milliseconds: 1000);
   static const _exerciseLossGrace = Duration(milliseconds: 1100);
   static const _initialReadyDuration =
