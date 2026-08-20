@@ -290,8 +290,8 @@ class WorkoutPoseAnalyzer {
   static const double jumpingJackLandmarkConfidenceThreshold = 0.30;
 
   // Push-up landmark confidence hysteresis.
-  static const double _pushUpAcquireConfidence = 0.30;
-  static const double _pushUpKeepConfidence = 0.16;
+  static const double _pushUpAcquireConfidence = 0.20;
+  static const double _pushUpKeepConfidence = 0.12;
 
   // Briefly preserve an already-tracked push-up landmark through
   // confidence flicker or short self-occlusion.
@@ -712,7 +712,7 @@ WorkoutPoseObservation _analyzeLandmarks(
     // High-confidence observations catch up quickly; weak observations
     // influence the smoothed point less, reducing one-frame jitter.
     final smoothingAlpha =
-        isPushUp ? 0.35 + confidenceWeight * 0.35 : 1.0;
+        isPushUp ? 0.55 + confidenceWeight * 0.35 : 1.0;
 
     final smoothed = previousSmoothed == null
         ? raw
@@ -1030,8 +1030,8 @@ const maximumRepDuration =
   // Confirmation is time-based so behavior is stable across devices/FPS.
   const topConfirmationDuration = Duration(milliseconds: 180);
   const bottomConfirmationDuration = Duration(milliseconds: 100);
-  const returnConfirmationDuration = Duration(milliseconds: 120);
-  const candidateGapGrace = Duration(milliseconds: 90);
+  const returnConfirmationDuration = Duration(milliseconds: 80);
+  const candidateGapGrace = Duration(milliseconds: 200);
   const minimumConfirmationSamples = 2;
 
   final points = sample.landmarks;
@@ -1283,9 +1283,9 @@ if (!usableSignal) {
   if (rawElbowAngle != null) {
     final previousElbow = _pushUpSmoothedElbowAngle;
 
-    _pushUpSmoothedElbowAngle = previousElbow == null
-        ? rawElbowAngle
-        : previousElbow * 0.55 + rawElbowAngle * 0.45;
+  _pushUpSmoothedElbowAngle = previousElbow == null
+      ? rawElbowAngle
+      : previousElbow * 0.35 + rawElbowAngle * 0.65;
 
     elbowAngle = _pushUpSmoothedElbowAngle;
   }
