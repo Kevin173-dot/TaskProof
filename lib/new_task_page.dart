@@ -1638,7 +1638,7 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
           child: _TaskModeButton(
             title: 'Focus',
             subtitle: 'Stay in one area',
-            icon: Icons.chair_alt_outlined,
+            imagePath: 'assets/images/icons/focus_mode.png',
             selected: selectedMode == TaskMode.focus,
             onTap: () {
               setState(() {
@@ -1654,7 +1654,7 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
           child: _TaskModeButton(
             title: 'Active',
             subtitle: 'Move around',
-            icon: Icons.cleaning_services_outlined,
+            imagePath: 'assets/images/icons/active_mode.png',
             selected: selectedMode == TaskMode.active,
             onTap: () {
               setState(() {
@@ -1670,7 +1670,7 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
           child: _TaskModeButton(
             title: 'Workout',
             subtitle: 'Exercise / reps',
-            icon: Icons.fitness_center_rounded,
+            imagePath: 'assets/images/icons/workout_mode.png',
             selected: selectedMode == TaskMode.workout,
             onTap: () {
               setState(() {
@@ -2885,7 +2885,7 @@ Widget _buildFocusSetup() {
           child: Column(
             children: [
               _VerificationRow(
-                icon: Icons.person_rounded,
+                imagePath: 'assets/images/icons/stay_in_position.png',
                 title: 'Stay in Position',
                 subtitle:
                     'Warn for major posture changes, looking away, or leaving frame.',
@@ -2897,7 +2897,7 @@ Widget _buildFocusSetup() {
               const Divider(height: 1),
 
               _VerificationRow(
-                icon: Icons.inventory_2_outlined,
+                imagePath: 'assets/images/icons/object_in_frame.png',
                 title: 'Object Must Be in Frame',
                 subtitle: 'Keep the selected object visible in the camera.',
                 checked: objectInFrame,
@@ -2924,8 +2924,9 @@ Widget _buildFocusSetup() {
             ),
             child: Row(
               children: [
-                _PinkIcon(
-                  icon: Icons.verified_user_outlined,
+                _AssetIconBox(
+                  imagePath:
+                      'assets/images/icons/dual_verification.png',
                   dark: widget.isDarkMode,
                 ),
 
@@ -3011,9 +3012,8 @@ Widget _buildReferenceSetup() {
         children: [
           if (stayInPosition)
             _ReferenceRow(
-              icon: referencePose != null
-                  ? Icons.check_circle_rounded
-                  : Icons.photo_camera_outlined,
+              imagePath:
+                  'assets/images/icons/reference_position.png',
               title: 'Reference Position',
               subtitle: referencePose != null
               ? 'Calibrated — tap to recalibrate'
@@ -3557,7 +3557,10 @@ Widget _buildReferenceSetup() {
         ),
         child: Row(
           children: [
-            _PinkIcon(icon: Icons.music_note_rounded, dark: widget.isDarkMode),
+            _AssetIconBox(
+              imagePath: 'assets/images/icons/default_alarm.png',
+              dark: widget.isDarkMode,
+            ),
 
             const SizedBox(width: 13),
 
@@ -5531,14 +5534,14 @@ class _TaskModeButton extends StatelessWidget {
   const _TaskModeButton({
     required this.title,
     required this.subtitle,
-    required this.icon,
+    required this.imagePath,
     required this.selected,
     required this.onTap,
   });
 
   final String title;
   final String subtitle;
-  final IconData icon;
+  final String imagePath;
   final bool selected;
   final VoidCallback onTap;
 
@@ -5548,7 +5551,7 @@ class _TaskModeButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
-        constraints: const BoxConstraints(minHeight: 88),
+        constraints: const BoxConstraints(minHeight: 100),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         decoration: BoxDecoration(
           color: selected
@@ -5563,12 +5566,11 @@ class _TaskModeButton extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              color: selected
-                  ? _C.red
-                  : Theme.of(context).colorScheme.onSurface,
-              size: 27,
+            Image.asset(
+              imagePath,
+              width: 40,
+              height: 40,
+              fit: BoxFit.contain,
             ),
 
             const SizedBox(height: 5),
@@ -5751,6 +5753,37 @@ class _SectionDivider extends StatelessWidget {
   }
 }
 
+class _AssetIconBox extends StatelessWidget {
+  const _AssetIconBox({
+    required this.imagePath,
+    required this.dark,
+  });
+
+  final String imagePath;
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 50,
+      height: 50,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: dark
+            ? const Color(0xFF202126)
+            : const Color(0xFFF5F6F8),
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Image.asset(
+        imagePath,
+        width: 39,
+        height: 39,
+        fit: BoxFit.contain,
+      ),
+    );
+  }
+}
+
 class _PinkIcon extends StatelessWidget {
   const _PinkIcon({required this.icon, required this.dark});
 
@@ -5855,7 +5888,7 @@ class _ScheduleRow extends StatelessWidget {
 
 class _VerificationRow extends StatelessWidget {
   const _VerificationRow({
-    required this.icon,
+    required this.imagePath,
     required this.title,
     required this.subtitle,
     required this.checked,
@@ -5863,16 +5896,11 @@ class _VerificationRow extends StatelessWidget {
     required this.onTap,
   });
 
-  final IconData icon;
-
+  final String imagePath;
   final String title;
-
   final String subtitle;
-
   final bool checked;
-
   final bool dark;
-
   final VoidCallback onTap;
 
   @override
@@ -5883,7 +5911,10 @@ class _VerificationRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Row(
           children: [
-            _PinkIcon(icon: icon, dark: dark),
+            _AssetIconBox(
+              imagePath: imagePath,
+              dark: dark,
+            ),
 
             const SizedBox(width: 12),
 
@@ -5914,6 +5945,7 @@ class _VerificationRow extends StatelessWidget {
             ),
 
             const SizedBox(width: 10),
+
             AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               width: 27,
@@ -5943,24 +5975,21 @@ class _VerificationRow extends StatelessWidget {
 
 class _ReferenceRow extends StatelessWidget {
   const _ReferenceRow({
-    required this.icon,
     required this.title,
     required this.subtitle,
     required this.complete,
     required this.dark,
     required this.onTap,
+    this.icon,
+    this.imagePath,
   });
 
-  final IconData icon;
-
+  final IconData? icon;
+  final String? imagePath;
   final String title;
-
   final String subtitle;
-
   final bool complete;
-
   final bool dark;
-
   final VoidCallback onTap;
 
   @override
@@ -5987,15 +6016,22 @@ class _ReferenceRow extends StatelessWidget {
                       : const Color(0xFFD5D7DD),
                 ),
               ),
-              child: Icon(
-                icon,
-                color: complete
-                    ? _C.red
-                    : dark
-                    ? _T.muted
-                    : const Color(0xFF777A84),
-                size: 27,
-              ),
+              child: imagePath != null
+                  ? Image.asset(
+                      imagePath!,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.contain,
+                    )
+                  : Icon(
+                      icon,
+                      color: complete
+                          ? _C.red
+                          : dark
+                          ? _T.muted
+                          : const Color(0xFF777A84),
+                      size: 27,
+                    ),
             ),
 
             const SizedBox(width: 12),
