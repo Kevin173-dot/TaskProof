@@ -1077,8 +1077,8 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
                         color: Color(0xFF777A84),
                         fontSize: 11,
                         fontFamily: 'Nunito Sans',
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.3,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: .2,
                       ),
                     ),
                     if (_config.movementType !=
@@ -1196,9 +1196,9 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
         textAlign: TextAlign.center,
         style: TextStyle(
           color: _accentColor,
-          fontSize: 12,
+          fontSize: 11,
           fontFamily: 'Nunito Sans',
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

@@ -1011,9 +1011,9 @@ class _PersonBadge extends StatelessWidget {
               detected ? 'Person detected' : 'Finding person…',
               style: TextStyle(
                 color: color,
-                fontSize: 13,
+                fontSize: 11,
                 fontFamily: 'Nunito Sans',
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],

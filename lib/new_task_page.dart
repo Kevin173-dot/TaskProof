@@ -1305,21 +1305,36 @@ class _NewTaskPageState extends State<NewTaskPage> {
                       // =========================================
                       // DURATION
                       // =========================================
-                      const _SectionTitle('Duration'),
-
-                      const SizedBox(height: 10),
-
-                      _buildDurationPicker(),
-
-                      const SizedBox(height: 8),
-
-                      Center(
-                        child: Text(
-                          'Max duration is 24 hours.',
-                          style: TextStyle(
-                            color: dark ? _T.muted : const Color(0xFF676A74),
-                            fontSize: 13,
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                        decoration: BoxDecoration(
+                          color: dark ? _T.surface : Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: dark ? _T.border : const Color(0xFFE7E8EC),
+                            width: .8,
                           ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const _SectionTitle('Duration'),
+                            const SizedBox(height: 10),
+                            _buildDurationPicker(),
+                            const SizedBox(height: 8),
+                            Center(
+                              child: Text(
+                                'Max duration is 24 hours.',
+                                style: TextStyle(
+                                  color: dark
+                                      ? _T.muted
+                                      : const Color(0xFF676A74),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
 
@@ -1335,11 +1350,26 @@ class _NewTaskPageState extends State<NewTaskPage> {
                       // =========================================
                       // TASK MODE
                       // =========================================
-                      const _SectionTitle('Task Mode'),
-
-                      const SizedBox(height: 10),
-
-                      _buildTaskModeSelector(),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                        decoration: BoxDecoration(
+                          color: dark ? _T.surface : Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: dark ? _T.border : const Color(0xFFE7E8EC),
+                            width: .8,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const _SectionTitle('Task Mode'),
+                            const SizedBox(height: 10),
+                            _buildTaskModeSelector(),
+                          ],
+                        ),
+                      ),
 
                       const SizedBox(height: 14),
 
@@ -1354,10 +1384,6 @@ class _NewTaskPageState extends State<NewTaskPage> {
                       // =========================================
                       // SENSITIVITY
                       // =========================================
-                      const _SectionTitle('Sensitivity'),
-
-                      const SizedBox(height: 7),
-
                       _buildSensitivity(),
 
                       const SizedBox(height: 24),
@@ -1473,42 +1499,43 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // ===========================================================
 
   Widget _buildFocusSetup() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _SectionTitle('Verification Rules'),
+    final outerBorderColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFE7E8EC);
 
-        const SizedBox(height: 10),
-
-        _buildVerificationRules(),
-
-        const SizedBox(height: 18),
-
-        const _SectionTitle('Expected Activity'),
-
-        const SizedBox(height: 8),
-
-        _buildFocusExpectedActivity(),
-
-        const SizedBox(height: 18),
-
-        const _SectionTitle('Reference Setup'),
-
-        const SizedBox(height: 4),
-
-        Text(
-          _referenceDescription,
-          style: TextStyle(
-            color: widget.isDarkMode ? _T.muted : const Color(0xFF555861),
-            fontSize: 13,
-            height: 1.35,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: outerBorderColor, width: .8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle('Verification Rules'),
+          const SizedBox(height: 10),
+          _buildVerificationRules(),
+          const SizedBox(height: 18),
+          const _SectionTitle('Expected Activity'),
+          const SizedBox(height: 8),
+          _buildFocusExpectedActivity(),
+          const SizedBox(height: 18),
+          const _SectionTitle('Reference Setup'),
+          const SizedBox(height: 4),
+          Text(
+            _referenceDescription,
+            style: TextStyle(
+              color: widget.isDarkMode ? _T.muted : const Color(0xFF555861),
+              fontSize: 13,
+              height: 1.35,
+            ),
           ),
-        ),
-
-        const SizedBox(height: 10),
-
-        _buildReferenceSetup(),
-      ],
+          const SizedBox(height: 10),
+          _buildReferenceSetup(),
+        ],
+      ),
     );
   }
 
@@ -1604,79 +1631,109 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // ===========================================================
 
   Widget _buildActiveSetup() {
-  final borderColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
-  final dividerColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
+    final borderColor = widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+    final dividerColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFECEDEF);
+    final outerBorderColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFE7E8EC);
 
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const _SectionTitle('Active Task Setup'),
-      const SizedBox(height: 6),
-      Text(
-        'Active mode monitors movement, inactivity, presence, and leaving the task area.',
-        style: TextStyle(
-          color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
-          fontSize: 12,
-          height: 1.35,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: outerBorderColor, width: .8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle('Active Task Setup'),
+              const SizedBox(height: 6),
+              Text(
+                'Active mode monitors movement, inactivity, presence, and leaving the task area.',
+                style: TextStyle(
+                  color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: widget.isDarkMode ? _T.surface : Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor, width: .8),
+                ),
+                child: Column(
+                  children: [
+                    _buildExpectedActivity(),
+                    Divider(height: 1, thickness: .7, color: dividerColor),
+                    _buildInactivityWarning(),
+                    Divider(height: 1, thickness: .7, color: dividerColor),
+                    _buildBriefExitAllowance(),
+                    Divider(height: 1, thickness: .7, color: dividerColor),
+                    _buildRequiredObjectScan(),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      const SizedBox(height: 12),
-
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        decoration: BoxDecoration(
-          color: widget.isDarkMode ? _T.surface : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor, width: .8),
-        ),
-        child: Column(
-          children: [
-            _buildExpectedActivity(),
-            Divider(height: 1, thickness: .7, color: dividerColor),
-            _buildInactivityWarning(),
-            Divider(height: 1, thickness: .7, color: dividerColor),
-            _buildBriefExitAllowance(),
-            Divider(height: 1, thickness: .7, color: dividerColor),
-            _buildRequiredObjectScan(),
-          ],
-        ),
-      ),
-
-      const SizedBox(height: 18),
-      _buildCameraSetup(),
-    ],
-  );
-}
+        const SizedBox(height: 18),
+        _buildCameraSetup(),
+      ],
+    );
+  }
 
   // ===========================================================
   // WORKOUT SETUP
   // ===========================================================
 
   Widget _buildWorkoutSetup() {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const _SectionTitle('Workout Setup'),
-      const SizedBox(height: 8),
+    final outerBorderColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFE7E8EC);
 
-      _buildExerciseAndGoal(),
-
-      const SizedBox(height: 18),
-
-      const _SectionTitle('Optional Settings'),
-      const SizedBox(height: 8),
-
-      _buildWorkoutOptions(),
-
-      const SizedBox(height: 18),
-
-      _buildCameraSetup(),
-    ],
-  );
-}
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: outerBorderColor, width: .8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle('Workout Setup'),
+              const SizedBox(height: 8),
+              _buildExerciseAndGoal(),
+              const SizedBox(height: 18),
+              const _SectionTitle('Optional Settings'),
+              const SizedBox(height: 8),
+              _buildWorkoutOptions(),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        _buildCameraSetup(),
+      ],
+    );
+  }
 
   // ===========================================================
   // HEADER
@@ -2204,52 +2261,59 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // ===========================================================
 
   Widget _buildScheduleSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              'Schedule',
-              style: TextStyle(
-                color: widget.isDarkMode ? _T.text : Colors.black,
-                fontSize: 18,
-                fontFamily: 'Nunito Sans',
-                fontWeight: FontWeight.w800,
+    final outerBorderColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFE7E8EC);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: outerBorderColor, width: .8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Schedule',
+                style: TextStyle(
+                  color: widget.isDarkMode ? _T.text : Colors.black,
+                  fontSize: 18,
+                  fontFamily: 'Nunito Sans',
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            ),
-
-            const SizedBox(width: 5),
-
-            Text(
-              '(Optional)',
-              style: TextStyle(
-                color: widget.isDarkMode ? _T.muted : const Color(0xFF777A84),
-                fontSize: 14,
+              const SizedBox(width: 5),
+              Text(
+                '(Optional)',
+                style: TextStyle(
+                  color: widget.isDarkMode ? _T.muted : const Color(0xFF777A84),
+                  fontSize: 14,
+                ),
               ),
-            ),
-
-            const Spacer(),
-
-            if (scheduleEnabled)
-              Switch(
-                value: true,
-                onChanged: _setScheduleEnabled,
-                activeTrackColor: _C.red,
-                activeThumbColor: Colors.white,
-              ),
-          ],
-        ),
-
-        const SizedBox(height: 10),
-
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 220),
-          child: scheduleEnabled
-              ? _buildScheduleEnabled()
-              : _buildScheduleDisabled(),
-        ),
-      ],
+              const Spacer(),
+              if (scheduleEnabled)
+                Switch(
+                  value: true,
+                  onChanged: _setScheduleEnabled,
+                  activeTrackColor: _C.red,
+                  activeThumbColor: Colors.white,
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            child: scheduleEnabled
+                ? _buildScheduleEnabled()
+                : _buildScheduleDisabled(),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2494,157 +2558,194 @@ class _NewTaskPageState extends State<NewTaskPage> {
   // ===========================================================
 
   Widget _buildExpectedActivity() {
-  return _ModeSettingRow(
-    icon: Icons.bar_chart_rounded,
-    title: 'Expected Activity',
-    subtitle: 'How much movement is expected for this task.',
-    trailing: SizedBox(
-      width: 118,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: widget.isDarkMode ? _T.surface : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
-            width: .8,
+    return _ModeSettingRow(
+      icon: Icons.bar_chart_rounded,
+      title: 'Expected Activity',
+      subtitle: 'How much movement is expected for this task.',
+      trailing: SizedBox(
+        width: 118,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+              width: .8,
+            ),
           ),
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<ActivityLevel>(
-            value: activityLevel,
-            isExpanded: true,
-            items: const [
-              DropdownMenuItem(
-                value: ActivityLevel.light,
-                child: Text('Light'),
-              ),
-              DropdownMenuItem(
-                value: ActivityLevel.moderate,
-                child: Text('Moderate'),
-              ),
-              DropdownMenuItem(
-                value: ActivityLevel.high,
-                child: Text('High'),
-              ),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                activityLevel = value;
-              });
-            },
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<ActivityLevel>(
+              value: activityLevel,
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(
+                  value: ActivityLevel.light,
+                  child: Text(
+                    'Light',
+                    style: TextStyle(
+                      color: Color(0xFF777A84),
+                      fontSize: 11,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: ActivityLevel.moderate,
+                  child: Text(
+                    'Moderate',
+                    style: TextStyle(
+                      color: Color(0xFF777A84),
+                      fontSize: 11,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: ActivityLevel.high,
+                  child: Text(
+                    'High',
+                    style: TextStyle(
+                      color: Color(0xFF777A84),
+                      fontSize: 11,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  activityLevel = value;
+                });
+              },
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildInactivityWarning() {
-  const options = [
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-    Duration(minutes: 2),
-    Duration(minutes: 5),
-  ];
+    const options = [
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+      Duration(minutes: 5),
+    ];
 
-  return _ModeSettingRow(
-    icon: Icons.schedule_rounded,
-    title: 'Inactivity Warning',
-    subtitle: 'Warn if activity stays below the expected level for this long.',
-    trailing: SizedBox(
-      width: 118,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: widget.isDarkMode ? _T.surface : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
-            width: .8,
+    return _ModeSettingRow(
+      icon: Icons.schedule_rounded,
+      title: 'Inactivity Warning',
+      subtitle:
+          'Warn if activity stays below the expected level for this long.',
+      trailing: SizedBox(
+        width: 118,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+              width: .8,
+            ),
           ),
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<Duration>(
-            value: inactivityWarning,
-            isExpanded: true,
-            items: options.map((duration) {
-              return DropdownMenuItem(
-                value: duration,
-                child: Text(
-                  _durationOptionLabel(duration),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              );
-            }).toList(),
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                inactivityWarning = value;
-              });
-            },
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<Duration>(
+              value: inactivityWarning,
+              isExpanded: true,
+              items: options.map((duration) {
+                return DropdownMenuItem(
+                  value: duration,
+                  child: Text(
+                    _durationOptionLabel(duration),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF777A84),
+                      fontSize: 11,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  inactivityWarning = value;
+                });
+              },
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildBriefExitAllowance() {
-  const options = [
-    Duration.zero,
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-  ];
+    const options = [
+      Duration.zero,
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+    ];
 
-  return _ModeSettingRow(
-    icon: Icons.exit_to_app_rounded,
-    title: 'Brief Exit Allowance',
-    subtitle: 'Allow a short exit before a warning is triggered.',
-    trailing: SizedBox(
-      width: 118,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: widget.isDarkMode ? _T.surface : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
-            width: .8,
+    return _ModeSettingRow(
+      icon: Icons.exit_to_app_rounded,
+      title: 'Brief Exit Allowance',
+      subtitle: 'Allow a short exit before a warning is triggered.',
+      trailing: SizedBox(
+        width: 118,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+              width: .8,
+            ),
           ),
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<Duration>(
-            value: briefExitAllowance,
-            isExpanded: true,
-            items: options.map((duration) {
-              return DropdownMenuItem(
-                value: duration,
-                child: Text(
-                  duration == Duration.zero
-                      ? 'None'
-                      : _durationOptionLabel(duration),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              );
-            }).toList(),
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() {
-                briefExitAllowance = value;
-              });
-            },
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<Duration>(
+              value: briefExitAllowance,
+              isExpanded: true,
+              items: options.map((duration) {
+                return DropdownMenuItem(
+                  value: duration,
+                  child: Text(
+                    duration == Duration.zero
+                        ? 'None'
+                        : _durationOptionLabel(duration),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF777A84),
+                      fontSize: 11,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  briefExitAllowance = value;
+                });
+              },
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Future<void> _openObjectScanner() async {
     if (!MlKitCameraImageConverter.supported) {
@@ -2677,97 +2778,94 @@ class _NewTaskPageState extends State<NewTaskPage> {
   }
 
   Widget _buildRequiredObjectScan() {
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 9),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(Icons.view_in_ar_rounded, size: 27),
-            const SizedBox(width: 12),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.view_in_ar_rounded, size: 27),
+              const SizedBox(width: 12),
 
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Required Object / Tool',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontFamily: 'Nunito Sans',
-                      fontWeight: FontWeight.w800,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Required Object / Tool',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    selectedObjectScans.isEmpty
-                        ? 'Optional — scan an object or tool that must appear.'
-                        : '${selectedObjectScans.length}/3 saved objects selected.',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF777A84),
-                      height: 1.25,
+                    const SizedBox(height: 2),
+                    Text(
+                      selectedObjectScans.isEmpty
+                          ? 'Optional — scan an object or tool that must appear.'
+                          : '${selectedObjectScans.length}/3 saved objects selected.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF777A84),
+                        height: 1.25,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
 
-            const SizedBox(width: 10),
+              const SizedBox(width: 10),
 
-            SizedBox(
-              height: 40,
-              child: OutlinedButton(
-                onPressed: _openObjectScanner,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _C.red,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  side: const BorderSide(
-                    color: Color(0xFFE1E3E7),
-                    width: .8,
+              SizedBox(
+                height: 40,
+                child: OutlinedButton(
+                  onPressed: _openObjectScanner,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _C.red,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    side: const BorderSide(color: Color(0xFFE1E3E7), width: .8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                  child: Text(
+                    selectedObjectScans.isEmpty ? 'Add' : 'Edit',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-                child: Text(
-                  selectedObjectScans.isEmpty ? 'Add' : 'Edit',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
+              ),
+            ],
+          ),
+
+          if (selectedObjectScans.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: 39),
+              child: Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: selectedObjectScans.map((scan) {
+                  return Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(scan.name),
+                    deleteIcon: const Icon(Icons.close_rounded, size: 16),
+                    onDeleted: () {
+                      setState(() {
+                        selectedObjectScans.removeWhere(
+                          (item) => item.id == scan.id,
+                        );
+                      });
+                    },
+                  );
+                }).toList(),
               ),
             ),
           ],
-        ),
-
-        if (selectedObjectScans.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.only(left: 39),
-            child: Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: selectedObjectScans.map((scan) {
-                return Chip(
-                  visualDensity: VisualDensity.compact,
-                  label: Text(scan.name),
-                  deleteIcon: const Icon(Icons.close_rounded, size: 16),
-                  onDeleted: () {
-                    setState(() {
-                      selectedObjectScans.removeWhere(
-                        (item) => item.id == scan.id,
-                      );
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-          ),
         ],
-      ],
-    ),
-  );
-}
+      ),
+    );
+  }
 
   String _durationOptionLabel(Duration duration) {
     if (duration.inMinutes >= 1 && duration.inSeconds % 60 == 0) {
@@ -3182,58 +3280,264 @@ class _NewTaskPageState extends State<NewTaskPage> {
   }
 
   Widget _buildExerciseAndGoal() {
-  final exercises = _availableWorkoutExercises;
+    final exercises = _availableWorkoutExercises;
 
-  final borderColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
-  final dividerColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
+    final borderColor = widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+    final dividerColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFECEDEF);
 
-  return Container(
-    width: double.infinity,
-    decoration: BoxDecoration(
-      color: widget.isDarkMode ? _T.surface : Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: borderColor, width: .8),
-    ),
-    child: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            children: [
-              const Icon(Icons.fitness_center_rounded, size: 27),
-              const SizedBox(width: 12),
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: .8),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            child: Row(
+              children: [
+                const Icon(Icons.fitness_center_rounded, size: 27),
+                const SizedBox(width: 12),
 
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Exercise',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontFamily: 'Nunito Sans',
-                        fontWeight: FontWeight.w800,
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Exercise',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontFamily: 'Nunito Sans',
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Choose the movement TaskProof should track.',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF777A84),
-                        height: 1.25,
+                      SizedBox(height: 2),
+                      Text(
+                        'Choose the movement TaskProof should track.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF777A84),
+                          height: 1.25,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
 
-              const SizedBox(width: 10),
+                const SizedBox(width: 10),
 
-              SizedBox(
-                width: 146,
+                SizedBox(
+                  width: 146,
+                  child: Container(
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: widget.isDarkMode ? _T.surface : Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: borderColor, width: .8),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<WorkoutExercise>(
+                        value: selectedExercise,
+                        isExpanded: true,
+                        items: exercises.map((exercise) {
+                          return DropdownMenuItem(
+                            value: exercise,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _workoutExerciseIcon(exercise),
+                                  size: 20,
+                                  color: _C.red,
+                                ),
+                                const SizedBox(width: 7),
+                                Flexible(
+                                  child: Text(
+                                    _workoutExerciseLabel(exercise),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+
+                          setState(() {
+                            selectedExercise = value;
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          Divider(height: 1, thickness: .7, color: dividerColor),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            child: Row(
+              children: [
+                const Icon(Icons.flag_outlined, size: 27),
+                const SizedBox(width: 12),
+
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Goal',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontFamily: 'Nunito Sans',
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Target number of repetitions.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF777A84),
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 10),
+
+                Container(
+                  width: 140,
+                  height: 94,
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  decoration: BoxDecoration(
+                    color: widget.isDarkMode ? _T.surface : Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: borderColor, width: .8),
+                  ),
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _repGoalValue,
+                    builder: (context, value, child) {
+                      return _RepGoalWheel(
+                        controller: _repGoalController,
+                        selectedValue: value,
+                        onChanged: (newValue) {
+                          workoutRepGoal = newValue;
+                          _repGoalValue.value = newValue;
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWorkoutOptions() {
+    const restOptions = [
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+    ];
+
+    final borderColor = widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+    final dividerColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFECEDEF);
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: .8),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            child: Row(
+              children: [
+                const Icon(Icons.person_search_rounded, size: 27),
+                const SizedBox(width: 12),
+
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'Form Checking',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(width: 7),
+                          _ProBadge(),
+                        ],
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Get extra feedback on your form.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF777A84),
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 10),
+
+                Switch(
+                  value: workoutFormChecking,
+                  activeThumbColor: _C.red,
+                  onChanged: isPro
+                      ? (value) {
+                          setState(() {
+                            workoutFormChecking = value;
+                          });
+                        }
+                      : (_) {
+                          _showMessage(
+                            'Form Checking is a TaskProof Pro feature.',
+                          );
+                        },
+                ),
+              ],
+            ),
+          ),
+
+          if (workoutMovementType != WorkoutMovementType.repetitions) ...[
+            Divider(height: 1, thickness: .7, color: dividerColor),
+
+            _ModeSettingRow(
+              icon: Icons.timer_outlined,
+              title: 'Rest Limit',
+              subtitle: 'Maximum rest time between exercise activity.',
+              trailing: SizedBox(
+                width: 118,
                 child: Container(
                   height: 44,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -3243,28 +3547,21 @@ class _NewTaskPageState extends State<NewTaskPage> {
                     border: Border.all(color: borderColor, width: .8),
                   ),
                   child: DropdownButtonHideUnderline(
-                    child: DropdownButton<WorkoutExercise>(
-                      value: selectedExercise,
+                    child: DropdownButton<Duration>(
+                      value: workoutRestLimit,
                       isExpanded: true,
-                      items: exercises.map((exercise) {
+                      items: restOptions.map((duration) {
                         return DropdownMenuItem(
-                          value: exercise,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _workoutExerciseIcon(exercise),
-                                size: 20,
-                                color: _C.red,
-                              ),
-                              const SizedBox(width: 7),
-                              Flexible(
-                                child: Text(
-                                  _workoutExerciseLabel(exercise),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
+                          value: duration,
+                          child: Text(
+                            _durationOptionLabel(duration),
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF777A84),
+                              fontSize: 11,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         );
                       }).toList(),
@@ -3272,326 +3569,133 @@ class _NewTaskPageState extends State<NewTaskPage> {
                         if (value == null) return;
 
                         setState(() {
-                          selectedExercise = value;
+                          workoutRestLimit = value;
                         });
                       },
                     ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        Divider(height: 1, thickness: .7, color: dividerColor),
-
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            children: [
-              const Icon(Icons.flag_outlined, size: 27),
-              const SizedBox(width: 12),
-
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Goal',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontFamily: 'Nunito Sans',
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Target number of repetitions.',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF777A84),
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              Container(
-                width: 140,
-                height: 94,
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                decoration: BoxDecoration(
-                  color: widget.isDarkMode ? _T.surface : Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: borderColor, width: .8),
-                ),
-                child: ValueListenableBuilder<int>(
-                  valueListenable: _repGoalValue,
-                  builder: (context, value, child) {
-                    return _RepGoalWheel(
-                      controller: _repGoalController,
-                      selectedValue: value,
-                      onChanged: (newValue) {
-                        workoutRepGoal = newValue;
-                        _repGoalValue.value = newValue;
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-  Widget _buildWorkoutOptions() {
-  const restOptions = [
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-    Duration(minutes: 2),
-  ];
-
-  final borderColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
-  final dividerColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
-
-  return Container(
-    width: double.infinity,
-    decoration: BoxDecoration(
-      color: widget.isDarkMode ? _T.surface : Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: borderColor, width: .8),
-    ),
-    child: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            children: [
-              const Icon(Icons.person_search_rounded, size: 27),
-              const SizedBox(width: 12),
-
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Form Checking',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontFamily: 'Nunito Sans',
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(width: 7),
-                        _ProBadge(),
-                      ],
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Get extra feedback on your form.',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF777A84),
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              Switch(
-                value: workoutFormChecking,
-                activeThumbColor: _C.red,
-                onChanged: isPro
-                    ? (value) {
-                        setState(() {
-                          workoutFormChecking = value;
-                        });
-                      }
-                    : (_) {
-                        _showMessage(
-                          'Form Checking is a TaskProof Pro feature.',
-                        );
-                      },
-              ),
-            ],
-          ),
-        ),
-
-        if (workoutMovementType != WorkoutMovementType.repetitions) ...[
-          Divider(height: 1, thickness: .7, color: dividerColor),
-
-          _ModeSettingRow(
-            icon: Icons.timer_outlined,
-            title: 'Rest Limit',
-            subtitle: 'Maximum rest time between exercise activity.',
-            trailing: SizedBox(
-              width: 118,
-              child: Container(
-                height: 44,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: widget.isDarkMode ? _T.surface : Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: borderColor, width: .8),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<Duration>(
-                    value: workoutRestLimit,
-                    isExpanded: true,
-                    items: restOptions.map((duration) {
-                      return DropdownMenuItem(
-                        value: duration,
-                        child: Text(
-                          _durationOptionLabel(duration),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-
-                      setState(() {
-                        workoutRestLimit = value;
-                      });
-                    },
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
-      ],
-    ),
-  );
-}
+      ),
+    );
+  }
 
   Widget _buildCameraSetup() {
-  final borderColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
-  final dividerColor =
-      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
+    final borderColor = widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+    final dividerColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFECEDEF);
 
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const _SectionTitle('Camera Setup'),
-      const SizedBox(height: 8),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('Camera Setup'),
+        const SizedBox(height: 8),
 
-      Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: widget.isDarkMode ? _T.surface : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor, width: .8),
-        ),
-        child: Column(
-          children: [
-            InkWell(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(12),
-              ),
-              onTap: _openCameraPreview,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 7,
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: widget.isDarkMode ? _T.surface : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: borderColor, width: .8),
+          ),
+          child: Column(
+            children: [
+              InkWell(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: widget.isDarkMode
-                            ? const Color(0xFF202126)
-                            : const Color(0xFFF7F7F9),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(
-                        Icons.photo_camera_outlined,
-                        color: _C.red,
-                        size: 27,
-                      ),
-                    ),
-
-                    const SizedBox(width: 12),
-
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Position Camera',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontFamily: 'Nunito Sans',
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            selectedMode == TaskMode.workout
-                                ? 'Preview framing and choose the best camera orientation.'
-                                : 'Preview the camera and make sure the task area is visible.',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Color(0xFF777A84),
-                              height: 1.25,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(width: 10),
-
-                    if (selectedMode == TaskMode.workout)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Text(
-                          workoutCameraOrientation ==
-                                  WorkoutCameraOrientation.landscape
-                              ? 'Landscape'
-                              : 'Portrait',
-                          style: const TextStyle(
-                            color: Color(0xFF777A84),
-                            fontSize: 11,
-                            fontFamily: 'Nunito Sans',
-                            fontWeight: FontWeight.w700,
-                          ),
+                onTap: _openCameraPreview,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: widget.isDarkMode
+                              ? const Color(0xFF202126)
+                              : const Color(0xFFF7F7F9),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: _C.red,
+                          size: 27,
                         ),
                       ),
 
-                    const Icon(Icons.chevron_right_rounded, size: 20),
-                  ],
+                      const SizedBox(width: 12),
+
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Position Camera',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontFamily: 'Nunito Sans',
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              selectedMode == TaskMode.workout
+                                  ? 'Preview framing and choose the best camera orientation.'
+                                  : 'Preview the camera and make sure the task area is visible.',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF777A84),
+                                height: 1.25,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(width: 10),
+
+                      if (selectedMode == TaskMode.workout)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Text(
+                            workoutCameraOrientation ==
+                                    WorkoutCameraOrientation.landscape
+                                ? 'Landscape'
+                                : 'Portrait',
+                            style: const TextStyle(
+                              color: Color(0xFF777A84),
+                              fontSize: 11,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+
+                      const Icon(Icons.chevron_right_rounded, size: 20),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-            Divider(height: 1, thickness: .7, color: dividerColor),
+              Divider(height: 1, thickness: .7, color: dividerColor),
 
-            _buildAlarmRow(),
-          ],
+              _buildAlarmRow(),
+            ],
+          ),
         ),
-      ),
-    ],
-  );
-}
+      ],
+    );
+  }
 
   Future<void> _openCameraPreview() async {
     switch (selectedMode) {
@@ -3755,109 +3859,205 @@ class _NewTaskPageState extends State<NewTaskPage> {
   Widget _buildSensitivity() {
     const sensitivityRed = Color(0xFFFF111C);
     const sensitivityOrange = Color(0xFFFF8A00);
+    const inactiveTrack = Color(0xFFE1E3E7);
+    final outerBorderColor = widget.isDarkMode
+        ? _T.border
+        : const Color(0xFFE7E8EC);
 
-    return ValueListenableBuilder<double>(
-      valueListenable: _sensitivityValue,
-      builder: (context, value, child) {
-        final thumbColor =
-            Color.lerp(sensitivityRed, sensitivityOrange, value) ??
-            sensitivityRed;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: outerBorderColor, width: .8),
+      ),
+      child: ValueListenableBuilder<double>(
+        valueListenable: _sensitivityValue,
+        builder: (context, value, child) {
+          final thumbColor =
+              Color.lerp(sensitivityRed, sensitivityOrange, value) ??
+              sensitivityRed;
 
-        return Column(
-          children: [
-            SizedBox(
-              height: 48,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Positioned(
-                    left: 24,
-                    right: 24,
-                    child: Container(
-                      height: 5,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        gradient: const LinearGradient(
-                          begin: Alignment.centerLeft,
-                          end: Alignment.centerRight,
-                          colors: [sensitivityRed, sensitivityOrange],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: widget.isDarkMode
-                                ? Colors.black.withValues(alpha: .24)
-                                : Colors.black.withValues(alpha: .08),
-                            blurRadius: 5,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle('Sensitivity'),
 
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 5,
+              const SizedBox(height: 4),
 
-                      activeTrackColor: Colors.transparent,
-
-                      inactiveTrackColor: Colors.transparent,
-
-                      thumbColor: thumbColor,
-
-                      overlayColor: thumbColor.withValues(alpha: .14),
-
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 9,
-                      ),
-
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 18,
-                      ),
-                    ),
-                    child: Slider(
-                      value: value,
-                      min: 0,
-                      max: 1,
-                      onChanged: (nextValue) {
-                        sensitivity = nextValue;
-
-                        _sensitivityValue.value = nextValue;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 3),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Low', style: TextStyle(fontSize: 12)),
-                  Text('Medium', style: TextStyle(fontSize: 12)),
-                  Text('High', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 6),
-
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _sensitivityDescription,
+              Text(
+                'Higher sensitivity notices changes more easily.',
                 style: TextStyle(
                   color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
                   fontSize: 12,
                   height: 1.35,
                 ),
               ),
-            ),
-          ],
-        );
-      },
+
+              const SizedBox(height: 12),
+
+              SizedBox(
+                height: 44,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    const horizontalInset = 18.0;
+                    const trackHeight = 5.0;
+                    const thumbOuterSize = 30.0;
+                    const thumbInnerSize = 17.0;
+                    const thumbRadius = thumbOuterSize / 2;
+                    final usableWidth =
+                        constraints.maxWidth - (horizontalInset * 2);
+                    final activeWidth = usableWidth * value;
+
+                    return Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Positioned(
+                          left: horizontalInset,
+                          right: horizontalInset,
+                          child: Container(
+                            height: trackHeight,
+                            decoration: BoxDecoration(
+                              color: widget.isDarkMode
+                                  ? _T.border
+                                  : inactiveTrack,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                        ),
+
+                        Positioned(
+                          left: horizontalInset,
+                          width: activeWidth,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: Container(
+                              height: trackHeight,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                  colors: [sensitivityRed, thumbColor],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: widget.isDarkMode
+                                        ? Colors.black.withValues(alpha: .24)
+                                        : Colors.black.withValues(alpha: .08),
+                                    blurRadius: 5,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: trackHeight,
+                            activeTrackColor: Colors.transparent,
+                            inactiveTrackColor: Colors.transparent,
+                            thumbColor: Colors.transparent,
+                            overlayColor: thumbColor.withValues(alpha: .12),
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 15,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 19,
+                            ),
+                          ),
+                          child: Slider(
+                            value: value,
+                            min: 0,
+                            max: 1,
+                            onChanged: (nextValue) {
+                              sensitivity = nextValue;
+                              _sensitivityValue.value = nextValue;
+                            },
+                          ),
+                        ),
+
+                        Positioned(
+                          left: horizontalInset + activeWidth - thumbRadius,
+                          child: IgnorePointer(
+                            child: Container(
+                              width: thumbOuterSize,
+                              height: thumbOuterSize,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 1,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: .18),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: Container(
+                                width: thumbInnerSize,
+                                height: thumbInnerSize,
+                                decoration: BoxDecoration(
+                                  color: thumbColor,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 3),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Low',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF777A84)),
+                    ),
+                    Text(
+                      'Medium',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF777A84)),
+                    ),
+                    Text(
+                      'High',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF777A84)),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 6),
+
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _sensitivityDescription,
+                  style: TextStyle(
+                    color: widget.isDarkMode
+                        ? _T.muted
+                        : const Color(0xFF676A74),
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -5354,10 +5554,7 @@ class _TaskModeButton extends StatelessWidget {
               subtitle,
               textAlign: TextAlign.center,
               maxLines: 1,
-              style: const TextStyle(
-                fontSize: 10,
-                color: Color(0xFF777A84),
-              ),
+              style: const TextStyle(fontSize: 10, color: Color(0xFF777A84)),
             ),
           ],
         ),
@@ -5425,10 +5622,7 @@ class _WorkoutTypeButton extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 9,
-                color: Color(0xFF777A84),
-              ),
+              style: const TextStyle(fontSize: 9, color: Color(0xFF777A84)),
             ),
           ],
         ),
@@ -5979,10 +6173,7 @@ class _DurationWheel extends StatelessWidget {
 
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 9,
-              color: Color(0xFF777A84),
-            ),
+            style: const TextStyle(fontSize: 9, color: Color(0xFF777A84)),
           ),
         ],
       ),

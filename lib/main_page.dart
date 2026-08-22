@@ -928,9 +928,9 @@ class _MainPageState extends State<MainPage> {
                           'LIVE SESSION',
                           style: TextStyle(
                             color: _C.red,
-                            fontSize: 12,
+                            fontSize: 11,
                             fontFamily: 'Nunito Sans',
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -3109,172 +3109,172 @@ class _LiveVerificationPageState extends State<LiveVerificationPage>
   // END EARLY
   // ===========================================================
 
-Future<void> _confirmEndEarly() async {
-  final end = await showDialog<bool>(
-    context: context,
-    barrierDismissible: false,
-    barrierColor: Colors.black.withValues(alpha: 0.28),
-    builder: (dialogContext) {
-      return Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 34),
-        child: Container(
-          width: 360,
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 30,
-                offset: const Offset(0, 12),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Warning icon
-              Container(
-                width: 58,
-                height: 58,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFFE8EA),
-                  shape: BoxShape.circle,
+  Future<void> _confirmEndEarly() async {
+    final end = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.28),
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 34),
+          child: Container(
+            width: 360,
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.18),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12),
                 ),
-                child: const Center(
-                  child: Icon(
-                    Icons.warning_amber_rounded,
-                    color: _C.red,
-                    size: 30,
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Warning icon
+                Container(
+                  width: 58,
+                  height: 58,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFFE8EA),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.warning_amber_rounded,
+                      color: _C.red,
+                      size: 30,
+                    ),
                   ),
                 ),
-              ),
 
-              const SizedBox(height: 18),
+                const SizedBox(height: 18),
 
-              const Text(
-                'End session?',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF17181C),
-                  fontSize: 22,
-                  fontFamily: 'Nunito Sans',
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.4,
+                const Text(
+                  'End session?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF17181C),
+                    fontSize: 22,
+                    fontFamily: 'Nunito Sans',
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                  ),
                 ),
-              ),
 
-              const SizedBox(height: 9),
+                const SizedBox(height: 9),
 
-              const Text(
-                'The task will not be marked as completed.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF737782),
-                  fontSize: 14,
-                  fontFamily: 'Nunito Sans',
-                  fontWeight: FontWeight.w500,
-                  height: 1.35,
+                const Text(
+                  'The task will not be marked as completed.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF737782),
+                    fontSize: 14,
+                    fontFamily: 'Nunito Sans',
+                    fontWeight: FontWeight.w500,
+                    height: 1.35,
+                  ),
                 ),
-              ),
 
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
 
-              const Divider(
-                height: 1,
-                thickness: 1,
-                color: Color(0xFFECEDEF),
-              ),
+                const Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: Color(0xFFECEDEF),
+                ),
 
-              const SizedBox(height: 18),
+                const SizedBox(height: 18),
 
-              Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.pop(dialogContext, false);
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF17181C),
-                          side: const BorderSide(
-                            color: Color(0xFFDADCE1),
-                            width: 1.2,
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 52,
+                        child: OutlinedButton(
+                          onPressed: () {
+                            Navigator.pop(dialogContext, false);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF17181C),
+                            side: const BorderSide(
+                              color: Color(0xFFDADCE1),
+                              width: 1.2,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Continue',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontFamily: 'Nunito Sans',
-                            fontWeight: FontWeight.w700,
+                          child: const Text(
+                            'Continue',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
 
-                  const SizedBox(width: 14),
+                    const SizedBox(width: 14),
 
-                  Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: FilledButton(
-                        onPressed: () {
-                          Navigator.pop(dialogContext, true);
-                        },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _C.red,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                    Expanded(
+                      child: SizedBox(
+                        height: 52,
+                        child: FilledButton(
+                          onPressed: () {
+                            Navigator.pop(dialogContext, true);
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _C.red,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
-                        ),
-                        child: const Text(
-                          'End Session',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontFamily: 'Nunito Sans',
-                            fontWeight: FontWeight.w700,
+                          child: const Text(
+                            'End Session',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-      );
-    },
-  );
+        );
+      },
+    );
 
-  if (end != true || !mounted) {
-    return;
+    if (end != true || !mounted) {
+      return;
+    }
+
+    widget.task.status = TaskStatus.ready;
+    widget.task.startedAt = null;
+    widget.task.completedAt = null;
+    _warningActive = false;
+
+    await _disposeCamera();
+
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.pop(context);
   }
-
-  widget.task.status = TaskStatus.ready;
-  widget.task.startedAt = null;
-  widget.task.completedAt = null;
-  _warningActive = false;
-
-  await _disposeCamera();
-
-  if (!mounted) {
-    return;
-  }
-
-  Navigator.pop(context);
-}
 
   Color _verificationColor(bool needsCalibration) {
     if (_userPaused) {

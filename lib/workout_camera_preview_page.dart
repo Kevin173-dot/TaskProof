@@ -513,7 +513,8 @@ class _WorkoutCameraPreviewPageState extends State<WorkoutCameraPreviewPage>
                             style: TextStyle(
                               color: _accent,
                               fontFamily: 'Nunito Sans',
-                              fontWeight: FontWeight.w800,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
