@@ -1248,51 +1248,181 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
     }
   }
 
-  Future<void> _confirmEndEarly() async {
-    if (_confirmingEnd || _finishing || !mounted) {
-      return;
-    }
-
-    _confirmingEnd = true;
-
-    final end = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('End session?'),
-        content: const Text('The task will not be marked as completed.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Continue'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _taskProofRed),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('End Session'),
-          ),
-        ],
-      ),
-    );
-
-    _confirmingEnd = false;
-
-    if (end != true || !mounted || _finishing) {
-      return;
-    }
-
-    _finishing = true;
-    _sessionTimer?.cancel();
-    _warningLatched = false;
-    widget.task.status = TaskStatus.ready;
-    widget.task.startedAt = null;
-    widget.task.completedAt = null;
-
-    await _shutdownResources();
-
-    if (mounted) {
-      Navigator.pop(context);
-    }
+Future<void> _confirmEndEarly() async {
+  if (_confirmingEnd || _finishing || !mounted) {
+    return;
   }
+
+  _confirmingEnd = true;
+
+  final end = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    barrierColor: Colors.black.withValues(alpha: 0.28),
+    builder: (dialogContext) {
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 34),
+        child: Container(
+          width: 360,
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 30,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Warning icon
+              Container(
+                width: 58,
+                height: 58,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFE8EA),
+                  shape: BoxShape.circle,
+                ),
+                child: const Center(
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    color: _taskProofRed,
+                    size: 30,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 18),
+
+              const Text(
+                'End session?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF17181C),
+                  fontSize: 22,
+                  fontFamily: 'Nunito Sans',
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.4,
+                ),
+              ),
+
+              const SizedBox(height: 9),
+
+              const Text(
+                'The task will not be marked as completed.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF737782),
+                  fontSize: 14,
+                  fontFamily: 'Nunito Sans',
+                  fontWeight: FontWeight.w500,
+                  height: 1.35,
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              const Divider(
+                height: 1,
+                thickness: 1,
+                color: Color(0xFFECEDEF),
+              ),
+
+              const SizedBox(height: 18),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pop(dialogContext, false);
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF17181C),
+                          side: const BorderSide(
+                            color: Color(0xFFDADCE1),
+                            width: 1.2,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Continue',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'Nunito Sans',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 14),
+
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: FilledButton(
+                        onPressed: () {
+                          Navigator.pop(dialogContext, true);
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _taskProofRed,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'End Session',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'Nunito Sans',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  _confirmingEnd = false;
+
+  if (end != true || !mounted || _finishing) {
+    return;
+  }
+
+  _finishing = true;
+  _sessionTimer?.cancel();
+  _warningLatched = false;
+
+  widget.task.status = TaskStatus.ready;
+  widget.task.startedAt = null;
+  widget.task.completedAt = null;
+
+  await _shutdownResources();
+
+  if (mounted) {
+    Navigator.pop(context);
+  }
+}
 
   void _refreshUi() {
     if (!mounted || _closing && !_finishing) {
@@ -1482,6 +1612,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
                         style: TextStyle(
                           color: foreground,
                           fontSize: 22,
+                          fontFamily: 'Nunito Sans',
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -1549,6 +1680,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
                                   style: TextStyle(
                                     color: _verificationColor,
                                     fontSize: 12,
+                                    fontFamily: 'Nunito Sans',
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
@@ -1592,6 +1724,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
                                     style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 20,
+                                      fontFamily: 'Nunito Sans',
                                       fontWeight: FontWeight.w900,
                                     ),
                                   ),
@@ -1685,6 +1818,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
                                     ? const Color(0xFFB8BEC7)
                                     : const Color(0xFF626771),
                                 fontSize: 11,
+                                fontFamily: 'Nunito Sans',
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -1696,6 +1830,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
                                     ? const Color(0xFFF2F3F5)
                                     : const Color(0xFF25272D),
                                 fontSize: 34,
+                                fontFamily: 'Nunito Sans',
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: -.8,
                               ),
@@ -1797,6 +1932,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
             style: TextStyle(
               color: Colors.white70,
               fontSize: 10,
+              fontFamily: 'Nunito Sans',
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -1833,6 +1969,7 @@ class _ActiveVerificationPageState extends State<ActiveVerificationPage>
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 11,
+                        fontFamily: 'Nunito Sans',
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1854,15 +1991,26 @@ class _ActiveCameraPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final previewSize = controller.value.previewSize;
+
+    if (previewSize == null) {
+      return const ColoredBox(color: Colors.black);
+    }
+
     return RepaintBoundary(
-      child: ColoredBox(
-        color: Colors.black,
-        child: Center(
-          child: AspectRatio(
-            aspectRatio: controller.value.aspectRatio,
-            child: CameraPreview(controller),
-          ),
-        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return ClipRect(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: previewSize.height,
+                height: previewSize.width,
+                child: CameraPreview(controller),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1923,6 +2071,7 @@ class _StatusLine extends StatelessWidget {
             style: TextStyle(
               color: foreground,
               fontSize: 12,
+              fontFamily: 'Nunito Sans',
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1975,6 +2124,7 @@ class _SessionControl extends StatelessWidget {
               style: TextStyle(
                 color: effectiveColor,
                 fontSize: 10,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w700,
               ),
             ),

@@ -1,4 +1,5 @@
 name: taskguard
+
 description: "TaskProof mobile app for Android and iOS."
 
 publish_to: 'none'
@@ -19,16 +20,15 @@ dependencies:
 
   flutter:
     sdk: flutter
-  
-  
 
   firebase_core: ^4.13.0
   firebase_auth: ^6.5.7
   google_sign_in: ^7.2.0
+  google_fonts: ^6.2.1
+
   path_provider: ^2.1.6
   image: ^4.9.1
   shared_preferences: ^2.5.5
-
 
 dependency_overrides:
   camera_android_camerax: 0.7.4+1
@@ -36,8 +36,8 @@ dependency_overrides:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_launcher_icons: ^0.14.4
 
+  flutter_launcher_icons: ^0.14.4
   flutter_lints: ^6.0.0
 
 flutter_launcher_icons:
@@ -52,3 +52,8 @@ flutter:
   assets:
     - assets/images/
     - assets/images/icons/
+
+  fonts:
+    - family: Nunito Sans
+      fonts:
+        - asset: assets/fonts/NunitoSans.ttf

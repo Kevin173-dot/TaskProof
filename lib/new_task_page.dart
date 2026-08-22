@@ -48,21 +48,11 @@ enum TaskIconType {
 // TASK STATUS
 // =============================================================
 
-enum TaskStatus {
-  ready,
-  scheduled,
-  live,
-  completed,
-}
+enum TaskStatus { ready, scheduled, live, completed }
 
 enum TaskMode { focus, active, workout }
 
-enum FocusActivity {
-  general,
-  reading,
-  writingNotes,
-  computerWork,
-}
+enum FocusActivity { general, reading, writingNotes, computerWork }
 
 enum ActivityLevel { light, moderate, high }
 
@@ -83,10 +73,8 @@ enum WorkoutExercise {
   jumpRope,
 }
 
-enum WorkoutCameraOrientation {
-  portrait,
-  landscape,
-}
+enum WorkoutCameraOrientation { portrait, landscape }
+
 WorkoutCameraOrientation workoutCameraOrientation =
     WorkoutCameraOrientation.portrait;
 
@@ -143,8 +131,7 @@ class FocusPoseMetrics {
   final double? structuralDeviation;
   final double? bodyAxisDifference;
 
-  bool get hasEnoughCoverage =>
-      commonLandmarkCount >= requiredLandmarkCount;
+  bool get hasEnoughCoverage => commonLandmarkCount >= requiredLandmarkCount;
 }
 
 // =============================================================
@@ -484,9 +471,7 @@ class TaskPoseAnalyzer {
     required List<Face> faces,
     required Size imageSize,
   }) {
-    if (poses.isEmpty ||
-        imageSize.width <= 0 ||
-        imageSize.height <= 0) {
+    if (poses.isEmpty || imageSize.width <= 0 || imageSize.height <= 0) {
       return null;
     }
 
@@ -514,8 +499,7 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    final visibleLandmarks =
-        <PoseLandmarkType, Offset>{};
+    final visibleLandmarks = <PoseLandmarkType, Offset>{};
 
     for (final entry in bestPose.landmarks.entries) {
       final landmark = entry.value;
@@ -534,8 +518,7 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    final geometry =
-        _geometryFor(visibleLandmarks);
+    final geometry = _geometryFor(visibleLandmarks);
 
     // Associate the face with the selected body instead of
     // blindly choosing the largest face in the frame.
@@ -547,10 +530,7 @@ class TaskPoseAnalyzer {
 
     final hasFaceOrientation =
         face != null &&
-        (
-          face.headEulerAngleY != null ||
-          face.headEulerAngleX != null
-        );
+        (face.headEulerAngleY != null || face.headEulerAngleX != null);
 
     return PoseReference(
       landmarks: visibleLandmarks,
@@ -562,8 +542,7 @@ class TaskPoseAnalyzer {
       headRoll: face?.headEulerAngleZ,
       faceDetected: face != null,
       faceTrackingEnabled: hasFaceOrientation,
-      bodyAxisAngle:
-          _bodyAxisAngleFor(visibleLandmarks),
+      bodyAxisAngle: _bodyAxisAngleFor(visibleLandmarks),
     );
   }
 
@@ -571,13 +550,9 @@ class TaskPoseAnalyzer {
   // BUILD ADAPTIVE REFERENCE
   // ===========================================================
 
-  static PoseReference? buildAdaptiveReference(
-    List<PoseReference> samples,
-  ) {
+  static PoseReference? buildAdaptiveReference(List<PoseReference> samples) {
     final validSamples = samples
-        .where(
-          (sample) => sample.landmarks.length >= 3,
-        )
+        .where((sample) => sample.landmarks.length >= 3)
         .toList(growable: false);
 
     // Don't calibrate from one accidental frame.
@@ -587,27 +562,18 @@ class TaskPoseAnalyzer {
 
     // A landmark must be present in at least 65% of
     // calibration frames to become part of the reference.
-    final requiredAppearances =
-        (validSamples.length * 0.65).ceil();
+    final requiredAppearances = (validSamples.length * 0.65).ceil();
 
-    final counts =
-        <PoseLandmarkType, int>{};
+    final counts = <PoseLandmarkType, int>{};
 
     for (final sample in validSamples) {
       for (final type in sample.landmarks.keys) {
-        counts.update(
-          type,
-          (value) => value + 1,
-          ifAbsent: () => 1,
-        );
+        counts.update(type, (value) => value + 1, ifAbsent: () => 1);
       }
     }
 
     final stableTypes = counts.entries
-        .where(
-          (entry) =>
-              entry.value >= requiredAppearances,
-        )
+        .where((entry) => entry.value >= requiredAppearances)
         .map((entry) => entry.key)
         .toList(growable: false);
 
@@ -615,8 +581,7 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    final averagedLandmarks =
-        <PoseLandmarkType, Offset>{};
+    final averagedLandmarks = <PoseLandmarkType, Offset>{};
 
     for (final type in stableTypes) {
       var totalX = 0.0;
@@ -636,10 +601,7 @@ class TaskPoseAnalyzer {
       }
 
       if (count > 0) {
-        averagedLandmarks[type] = Offset(
-          totalX / count,
-          totalY / count,
-        );
+        averagedLandmarks[type] = Offset(totalX / count, totalY / count);
       }
     }
 
@@ -647,8 +609,7 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    final geometry =
-        _geometryFor(averagedLandmarks);
+    final geometry = _geometryFor(averagedLandmarks);
 
     // Face tracking is enabled ONLY if the face was
     // consistently usable during calibration.
@@ -656,10 +617,7 @@ class TaskPoseAnalyzer {
         .where(
           (sample) =>
               sample.faceDetected &&
-              (
-                sample.headYaw != null ||
-                sample.headPitch != null
-              ),
+              (sample.headYaw != null || sample.headPitch != null),
         )
         .toList(growable: false);
 
@@ -668,8 +626,7 @@ class TaskPoseAnalyzer {
       (validSamples.length * 0.55).ceil(),
     );
 
-    final faceTrackingEnabled =
-        faceSamples.length >= requiredFaceSamples;
+    final faceTrackingEnabled = faceSamples.length >= requiredFaceSamples;
 
     return PoseReference(
       landmarks: averagedLandmarks,
@@ -678,34 +635,21 @@ class TaskPoseAnalyzer {
       poseScale: geometry.scale,
 
       headYaw: faceTrackingEnabled
-          ? _averageNullable(
-              faceSamples.map(
-                (sample) => sample.headYaw,
-              ),
-            )
+          ? _averageNullable(faceSamples.map((sample) => sample.headYaw))
           : null,
 
       headPitch: faceTrackingEnabled
-          ? _averageNullable(
-              faceSamples.map(
-                (sample) => sample.headPitch,
-              ),
-            )
+          ? _averageNullable(faceSamples.map((sample) => sample.headPitch))
           : null,
 
       headRoll: faceTrackingEnabled
-          ? _averageNullable(
-              faceSamples.map(
-                (sample) => sample.headRoll,
-              ),
-            )
+          ? _averageNullable(faceSamples.map((sample) => sample.headRoll))
           : null,
 
       faceDetected: faceTrackingEnabled,
       faceTrackingEnabled: faceTrackingEnabled,
 
-      bodyAxisAngle:
-          _bodyAxisAngleFor(averagedLandmarks),
+      bodyAxisAngle: _bodyAxisAngleFor(averagedLandmarks),
     );
   }
 
@@ -730,27 +674,19 @@ class TaskPoseAnalyzer {
 
     if (commonTypes.length < 3) {
       return FocusPoseMetrics(
-        commonLandmarkCount:
-            commonTypes.length,
-        requiredLandmarkCount:
-            requiredCount,
-        centerMovement:
-            double.infinity,
-        scaleDifference:
-            double.infinity,
+        commonLandmarkCount: commonTypes.length,
+        requiredLandmarkCount: requiredCount,
+        centerMovement: double.infinity,
+        scaleDifference: double.infinity,
       );
     }
 
-    final referenceCommon =
-        <PoseLandmarkType, Offset>{
-      for (final type in commonTypes)
-        type: reference.landmarks[type]!,
+    final referenceCommon = <PoseLandmarkType, Offset>{
+      for (final type in commonTypes) type: reference.landmarks[type]!,
     };
 
-    final currentCommon =
-        <PoseLandmarkType, Offset>{
-      for (final type in commonTypes)
-        type: current.landmarks[type]!,
+    final currentCommon = <PoseLandmarkType, Offset>{
+      for (final type in commonTypes) type: current.landmarks[type]!,
     };
 
     // Prefer stable head/torso/leg anchors for location.
@@ -760,45 +696,29 @@ class TaskPoseAnalyzer {
         .where(_positionAnchorTypes.contains)
         .toList(growable: false);
 
-    final positionTypes =
-        preferredPositionTypes.length >= 2
+    final positionTypes = preferredPositionTypes.length >= 2
         ? preferredPositionTypes
         : commonTypes;
 
-    final referencePosition =
-        <PoseLandmarkType, Offset>{
-      for (final type in positionTypes)
-        type: reference.landmarks[type]!,
+    final referencePosition = <PoseLandmarkType, Offset>{
+      for (final type in positionTypes) type: reference.landmarks[type]!,
     };
 
-    final currentPosition =
-        <PoseLandmarkType, Offset>{
-      for (final type in positionTypes)
-        type: current.landmarks[type]!,
+    final currentPosition = <PoseLandmarkType, Offset>{
+      for (final type in positionTypes) type: current.landmarks[type]!,
     };
 
-    final referenceGeometry =
-        _geometryFor(referencePosition);
+    final referenceGeometry = _geometryFor(referencePosition);
 
-    final currentGeometry =
-        _geometryFor(currentPosition);
+    final currentGeometry = _geometryFor(currentPosition);
 
     final centerMovement =
-        (
-          currentGeometry.center -
-          referenceGeometry.center
-        ).distance;
+        (currentGeometry.center - referenceGeometry.center).distance;
 
-    final scaleDifference =
-        referenceGeometry.scale <= 0.001
+    final scaleDifference = referenceGeometry.scale <= 0.001
         ? 0.0
-        : (
-            (
-              currentGeometry.scale -
-              referenceGeometry.scale
-            ).abs() /
-            referenceGeometry.scale
-          );
+        : ((currentGeometry.scale - referenceGeometry.scale).abs() /
+              referenceGeometry.scale);
 
     // =========================================================
     // MAJOR POSTURE CHANGE
@@ -811,50 +731,32 @@ class TaskPoseAnalyzer {
     double? structuralDeviation;
 
     if (structuralTypes.length >= 3) {
-      final refStructural =
-          <PoseLandmarkType, Offset>{
-        for (final type in structuralTypes)
-          type: reference.landmarks[type]!,
+      final refStructural = <PoseLandmarkType, Offset>{
+        for (final type in structuralTypes) type: reference.landmarks[type]!,
       };
 
-      final curStructural =
-          <PoseLandmarkType, Offset>{
-        for (final type in structuralTypes)
-          type: current.landmarks[type]!,
+      final curStructural = <PoseLandmarkType, Offset>{
+        for (final type in structuralTypes) type: current.landmarks[type]!,
       };
 
-      final refGeometry =
-          _geometryFor(refStructural);
+      final refGeometry = _geometryFor(refStructural);
 
-      final curGeometry =
-          _geometryFor(curStructural);
+      final curGeometry = _geometryFor(curStructural);
 
-      if (refGeometry.scale > 0.001 &&
-          curGeometry.scale > 0.001) {
+      if (refGeometry.scale > 0.001 && curGeometry.scale > 0.001) {
         var totalDeviation = 0.0;
 
         for (final type in structuralTypes) {
           final refPoint =
-              (
-                refStructural[type]! -
-                refGeometry.center
-              ) /
-              refGeometry.scale;
+              (refStructural[type]! - refGeometry.center) / refGeometry.scale;
 
           final curPoint =
-              (
-                curStructural[type]! -
-                curGeometry.center
-              ) /
-              curGeometry.scale;
+              (curStructural[type]! - curGeometry.center) / curGeometry.scale;
 
-          totalDeviation +=
-              (curPoint - refPoint).distance;
+          totalDeviation += (curPoint - refPoint).distance;
         }
 
-        structuralDeviation =
-            totalDeviation /
-            structuralTypes.length;
+        structuralDeviation = totalDeviation / structuralTypes.length;
       }
     }
 
@@ -862,34 +764,21 @@ class TaskPoseAnalyzer {
     // BODY ORIENTATION
     // =========================================================
 
-    final referenceAxis =
-        _bodyAxisAngleFor(referenceCommon);
+    final referenceAxis = _bodyAxisAngleFor(referenceCommon);
 
-    final currentAxis =
-        _bodyAxisAngleFor(currentCommon);
+    final currentAxis = _bodyAxisAngleFor(currentCommon);
 
-    final bodyAxisDifference =
-        referenceAxis != null &&
-        currentAxis != null
-        ? _axisAngleDifference(
-            referenceAxis,
-            currentAxis,
-          )
+    final bodyAxisDifference = referenceAxis != null && currentAxis != null
+        ? _axisAngleDifference(referenceAxis, currentAxis)
         : null;
 
     return FocusPoseMetrics(
-      commonLandmarkCount:
-          commonTypes.length,
-      requiredLandmarkCount:
-          requiredCount,
-      centerMovement:
-          centerMovement,
-      scaleDifference:
-          scaleDifference,
-      structuralDeviation:
-          structuralDeviation,
-      bodyAxisDifference:
-          bodyAxisDifference,
+      commonLandmarkCount: commonTypes.length,
+      requiredLandmarkCount: requiredCount,
+      centerMovement: centerMovement,
+      scaleDifference: scaleDifference,
+      structuralDeviation: structuralDeviation,
+      bodyAxisDifference: bodyAxisDifference,
     );
   }
 
@@ -921,19 +810,15 @@ class TaskPoseAnalyzer {
         continue;
       }
 
-      final currentPoint =
-          current.landmarks[type];
+      final currentPoint = current.landmarks[type];
 
-      final previousPoint =
-          previous.landmarks[type];
+      final previousPoint = previous.landmarks[type];
 
-      if (currentPoint == null ||
-          previousPoint == null) {
+      if (currentPoint == null || previousPoint == null) {
         continue;
       }
 
-      total +=
-          (currentPoint - previousPoint).distance;
+      total += (currentPoint - previousPoint).distance;
 
       count++;
     }
@@ -945,8 +830,7 @@ class TaskPoseAnalyzer {
     // Normalize movement based on apparent body size,
     // so moving closer to the camera doesn't drastically
     // change fidget sensitivity.
-    final normalizer =
-        math.max(reference.poseScale, 0.03);
+    final normalizer = math.max(reference.poseScale, 0.03);
 
     return (total / count) / normalizer;
   }
@@ -964,28 +848,21 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    final nose =
-        pose.landmarks[PoseLandmarkType.nose];
+    final nose = pose.landmarks[PoseLandmarkType.nose];
 
     // If there is no reliable nose, don't risk attaching
     // someone else's face to this body.
-    if (nose == null ||
-        nose.likelihood < _landmarkLikelihood) {
+    if (nose == null || nose.likelihood < _landmarkLikelihood) {
       return null;
     }
 
-    final headPoint =
-        Offset(nose.x, nose.y);
+    final headPoint = Offset(nose.x, nose.y);
 
     Face? bestFace;
     var bestDistance = double.infinity;
 
     for (final face in faces) {
-      final distance =
-          (
-            face.boundingBox.center -
-            headPoint
-          ).distance;
+      final distance = (face.boundingBox.center - headPoint).distance;
 
       if (distance < bestDistance) {
         bestDistance = distance;
@@ -997,19 +874,12 @@ class TaskPoseAnalyzer {
       return null;
     }
 
-    final shortSide = math.min(
-      imageSize.width,
-      imageSize.height,
-    );
+    final shortSide = math.min(imageSize.width, imageSize.height);
 
     // Only accept the face if it is actually close
     // to the selected pose's head.
-    if (
-      bestFace.boundingBox
-              .inflate(shortSide * 0.04)
-              .contains(headPoint) ||
-      bestDistance <= shortSide * 0.22
-    ) {
+    if (bestFace.boundingBox.inflate(shortSide * 0.04).contains(headPoint) ||
+        bestDistance <= shortSide * 0.22) {
       return bestFace;
     }
 
@@ -1020,93 +890,62 @@ class TaskPoseAnalyzer {
   // BODY ORIENTATION
   // ===========================================================
 
-  static double? _bodyAxisAngleFor(
-    Map<PoseLandmarkType, Offset> landmarks,
-  ) {
+  static double? _bodyAxisAngleFor(Map<PoseLandmarkType, Offset> landmarks) {
     final shoulderMid = _midpoint(
-      landmarks[
-          PoseLandmarkType.leftShoulder],
-      landmarks[
-          PoseLandmarkType.rightShoulder],
+      landmarks[PoseLandmarkType.leftShoulder],
+      landmarks[PoseLandmarkType.rightShoulder],
     );
 
     final hipMid = _midpoint(
-      landmarks[
-          PoseLandmarkType.leftHip],
-      landmarks[
-          PoseLandmarkType.rightHip],
+      landmarks[PoseLandmarkType.leftHip],
+      landmarks[PoseLandmarkType.rightHip],
     );
 
     Offset? upper;
     Offset? lower;
 
     // Best case: shoulders -> hips.
-    if (shoulderMid != null &&
-        hipMid != null) {
+    if (shoulderMid != null && hipMid != null) {
       upper = shoulderMid;
       lower = hipMid;
     } else {
-      final nose =
-          landmarks[PoseLandmarkType.nose];
+      final nose = landmarks[PoseLandmarkType.nose];
 
       // Good for upper-body-only camera views.
-      if (nose != null &&
-          shoulderMid != null) {
+      if (nose != null && shoulderMid != null) {
         upper = nose;
         lower = shoulderMid;
       } else {
-        final leftShoulder =
-            landmarks[
-                PoseLandmarkType.leftShoulder];
+        final leftShoulder = landmarks[PoseLandmarkType.leftShoulder];
 
-        final leftHip =
-            landmarks[
-                PoseLandmarkType.leftHip];
+        final leftHip = landmarks[PoseLandmarkType.leftHip];
 
-        final rightShoulder =
-            landmarks[
-                PoseLandmarkType.rightShoulder];
+        final rightShoulder = landmarks[PoseLandmarkType.rightShoulder];
 
-        final rightHip =
-            landmarks[
-                PoseLandmarkType.rightHip];
+        final rightHip = landmarks[PoseLandmarkType.rightHip];
 
-        if (leftShoulder != null &&
-            leftHip != null) {
+        if (leftShoulder != null && leftHip != null) {
           upper = leftShoulder;
           lower = leftHip;
-        } else if (
-          rightShoulder != null &&
-          rightHip != null
-        ) {
+        } else if (rightShoulder != null && rightHip != null) {
           upper = rightShoulder;
           lower = rightHip;
         }
       }
     }
 
-    if (upper != null &&
-        lower != null) {
+    if (upper != null && lower != null) {
       final delta = lower - upper;
 
       if (delta.distance >= 0.01) {
-        return math.atan2(
-              delta.dy,
-              delta.dx,
-            ) *
-            180 /
-            math.pi;
+        return math.atan2(delta.dy, delta.dx) * 180 / math.pi;
       }
     }
 
     // Fallback for unusual framing, for example
     // shoulders + elbows but no hips/head.
     final fallbackPoints = landmarks.entries
-        .where(
-          (entry) =>
-              _orientationFallbackTypes
-                  .contains(entry.key),
-        )
+        .where((entry) => _orientationFallbackTypes.contains(entry.key))
         .map((entry) => entry.value)
         .toList(growable: false);
 
@@ -1138,58 +977,37 @@ class TaskPoseAnalyzer {
       covarianceXY += dx * dy;
     }
 
-    if (
-      (covarianceXX + covarianceYY) <
-      0.0001
-    ) {
+    if ((covarianceXX + covarianceYY) < 0.0001) {
       return null;
     }
 
     return 0.5 *
-        math.atan2(
-          2 * covarianceXY,
-          covarianceXX - covarianceYY,
-        ) *
+        math.atan2(2 * covarianceXY, covarianceXX - covarianceYY) *
         180 /
         math.pi;
   }
 
-  static double _axisAngleDifference(
-    double first,
-    double second,
-  ) {
-    final difference =
-        angleDifference(first, second);
+  static double _axisAngleDifference(double first, double second) {
+    final difference = angleDifference(first, second);
 
     // A body axis has no arrow direction:
     // 0° and 180° represent the same line.
-    return difference > 90
-        ? 180 - difference
-        : difference;
+    return difference > 90 ? 180 - difference : difference;
   }
 
-  static Offset? _midpoint(
-    Offset? first,
-    Offset? second,
-  ) {
-    if (first == null ||
-        second == null) {
+  static Offset? _midpoint(Offset? first, Offset? second) {
+    if (first == null || second == null) {
       return null;
     }
 
-    return Offset(
-      (first.dx + second.dx) / 2,
-      (first.dy + second.dy) / 2,
-    );
+    return Offset((first.dx + second.dx) / 2, (first.dy + second.dy) / 2);
   }
 
   // ===========================================================
   // GEOMETRY
   // ===========================================================
 
-  static _PoseGeometry _geometryFor(
-    Map<PoseLandmarkType, Offset> landmarks,
-  ) {
+  static _PoseGeometry _geometryFor(Map<PoseLandmarkType, Offset> landmarks) {
     var totalX = 0.0;
     var totalY = 0.0;
 
@@ -1198,35 +1016,22 @@ class TaskPoseAnalyzer {
       totalY += point.dy;
     }
 
-    final center = Offset(
-      totalX / landmarks.length,
-      totalY / landmarks.length,
-    );
+    final center = Offset(totalX / landmarks.length, totalY / landmarks.length);
 
     var totalDistanceSquared = 0.0;
 
     for (final point in landmarks.values) {
       final delta = point - center;
 
-      totalDistanceSquared +=
-          (delta.dx * delta.dx) +
-          (delta.dy * delta.dy);
+      totalDistanceSquared += (delta.dx * delta.dx) + (delta.dy * delta.dy);
     }
 
-    final scale = math.sqrt(
-      totalDistanceSquared /
-      landmarks.length,
-    );
+    final scale = math.sqrt(totalDistanceSquared / landmarks.length);
 
-    return _PoseGeometry(
-      center: center,
-      scale: scale,
-    );
+    return _PoseGeometry(center: center, scale: scale);
   }
 
-  static double? _averageNullable(
-    Iterable<double?> values,
-  ) {
+  static double? _averageNullable(Iterable<double?> values) {
     var total = 0.0;
     var count = 0;
 
@@ -1239,29 +1044,22 @@ class TaskPoseAnalyzer {
       count++;
     }
 
-    return count == 0
-        ? null
-        : total / count;
+    return count == 0 ? null : total / count;
   }
 
   // ===========================================================
   // ANGLE DIFFERENCE
   // ===========================================================
 
-  static double angleDifference(
-    double first,
-    double second,
-  ) {
-    var difference =
-        (first - second).abs();
+  static double angleDifference(double first, double second) {
+    var difference = (first - second).abs();
 
     while (difference > 360) {
       difference -= 360;
     }
 
     if (difference > 180) {
-      difference =
-          360 - difference;
+      difference = 360 - difference;
     }
 
     return difference.abs();
@@ -1269,10 +1067,7 @@ class TaskPoseAnalyzer {
 }
 
 class _PoseGeometry {
-  const _PoseGeometry({
-    required this.center,
-    required this.scale,
-  });
+  const _PoseGeometry({required this.center, required this.scale});
 
   final Offset center;
   final double scale;
@@ -1340,16 +1135,16 @@ class _NewTaskPageState extends State<NewTaskPage> {
 
   TaskMode selectedMode = TaskMode.focus;
 
-FocusActivity focusActivity = FocusActivity.general;
+  FocusActivity focusActivity = FocusActivity.general;
 
-// ACTIVE
-ActivityLevel activityLevel = ActivityLevel.moderate;
+  // ACTIVE
+  ActivityLevel activityLevel = ActivityLevel.moderate;
 
-Duration inactivityWarning = const Duration(minutes: 2);
-Duration briefExitAllowance = const Duration(seconds: 30);
+  Duration inactivityWarning = const Duration(minutes: 2);
+  Duration briefExitAllowance = const Duration(seconds: 30);
 
-// WORKOUT
-WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
+  // WORKOUT
+  WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
   WorkoutExercise selectedExercise = WorkoutExercise.pushUps;
 
   int workoutRepGoal = 20;
@@ -1387,12 +1182,12 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
 
   // Change when subscriptions are connected.
   // ===========================================================
-// TEMPORARY PRO TESTING
-// ===========================================================
+  // TEMPORARY PRO TESTING
+  // ===========================================================
 
-// Set to true to test as a Pro user.
-// Set to false to test as a Free user.
-// IMPORTANT: Turn this off before production release.
+  // Set to true to test as a Pro user.
+  // Set to false to test as a Free user.
+  // IMPORTANT: Turn this off before production release.
   static const bool _forceProForTesting = true;
 
   bool get isPro => _forceProForTesting;
@@ -1498,18 +1293,14 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
                       // =========================================
                       _buildHeader(),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
 
                       // =========================================
                       // TASK NAME
                       // =========================================
-                      const _SectionTitle('Task Name'),
-
-                      const SizedBox(height: 9),
-
                       _buildTaskNameField(),
 
-                      const SizedBox(height: 22),
+                      const SizedBox(height: 16),
 
                       // =========================================
                       // DURATION
@@ -1532,14 +1323,14 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
                         ),
                       ),
 
-                      const _SectionDivider(),
+                      const SizedBox(height: 16),
 
                       // =========================================
                       // SCHEDULE
                       // =========================================
                       _buildScheduleSection(),
 
-                      const _SectionDivider(),
+                      const SizedBox(height: 16),
 
                       // =========================================
                       // TASK MODE
@@ -1550,22 +1341,15 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
 
                       _buildTaskModeSelector(),
 
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 14),
 
                       _buildModeSetup(),
 
-                      const _SectionDivider(),
+                      SizedBox(height: selectedMode == TaskMode.focus ? 5 : 16),
 
                       // =========================================
                       // ALARM
                       // =========================================
-                      const _SectionTitle('Alarm Sound'),
-
-                      const SizedBox(height: 9),
-
-                      _buildAlarmSound(),
-
-                      const SizedBox(height: 21),
 
                       // =========================================
                       // SENSITIVITY
@@ -1598,6 +1382,7 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
                             'Save Task',
                             style: TextStyle(
                               fontSize: 20,
+                              fontFamily: 'Nunito Sans',
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -1687,87 +1472,114 @@ WorkoutMovementType workoutMovementType = WorkoutMovementType.repetitions;
   // FOCUS SETUP
   // ===========================================================
 
-Widget _buildFocusSetup() {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const _SectionTitle('Verification Rules'),
+  Widget _buildFocusSetup() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('Verification Rules'),
 
-      const SizedBox(height: 10),
+        const SizedBox(height: 10),
 
-      _buildVerificationRules(),
+        _buildVerificationRules(),
 
-      const SizedBox(height: 18),
+        const SizedBox(height: 18),
 
-      const _SectionTitle('Expected Activity'),
+        const _SectionTitle('Expected Activity'),
 
-      const SizedBox(height: 8),
+        const SizedBox(height: 8),
 
-      _buildFocusExpectedActivity(),
+        _buildFocusExpectedActivity(),
 
-      const SizedBox(height: 18),
+        const SizedBox(height: 18),
 
-      const _SectionTitle('Reference Setup'),
+        const _SectionTitle('Reference Setup'),
 
-      const SizedBox(height: 4),
+        const SizedBox(height: 4),
 
-      Text(
-        _referenceDescription,
-        style: TextStyle(
-          color: widget.isDarkMode
-              ? _T.muted
-              : const Color(0xFF555861),
-          fontSize: 13,
-          height: 1.35,
+        Text(
+          _referenceDescription,
+          style: TextStyle(
+            color: widget.isDarkMode ? _T.muted : const Color(0xFF555861),
+            fontSize: 13,
+            height: 1.35,
+          ),
         ),
-      ),
 
-      const SizedBox(height: 10),
+        const SizedBox(height: 10),
 
-      _buildReferenceSetup(),
-    ],
-  );
-}
+        _buildReferenceSetup(),
+      ],
+    );
+  }
 
   Widget _buildFocusExpectedActivity() {
-    return _ModeSettingRow(
-      icon: Icons.center_focus_strong_rounded,
-      title: 'Focus behavior',
-      subtitle: _focusActivityDescription,
-      trailing: DropdownButton<FocusActivity>(
-        value: focusActivity,
-        underline: const SizedBox.shrink(),
-        items: const [
-          DropdownMenuItem(
-            value: FocusActivity.general,
-            child: Text('General'),
-          ),
-          DropdownMenuItem(
-            value: FocusActivity.reading,
-            child: Text('Reading'),
-          ),
-          DropdownMenuItem(
-            value: FocusActivity.writingNotes,
-            child: Text('Writing / Notes'),
-          ),
-          DropdownMenuItem(
-            value: FocusActivity.computerWork,
-            child: Text('Computer Work'),
-          ),
-        ],
-        onChanged: (value) {
-          if (value == null) {
-            return;
-          }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+          width: .8,
+        ),
+      ),
+      child: _ModeSettingRow(
+        icon: Icons.center_focus_strong_rounded,
+        title: 'Allowed Movement',
+        subtitle: _focusActivityDescription,
+        trailing: SizedBox(
+          width: 126,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: widget.isDarkMode ? _T.surface : Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+                width: .8,
+              ),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<FocusActivity>(
+                value: focusActivity,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(
+                    value: FocusActivity.general,
+                    child: Text('General'),
+                  ),
+                  DropdownMenuItem(
+                    value: FocusActivity.reading,
+                    child: Text('Reading'),
+                  ),
+                  DropdownMenuItem(
+                    value: FocusActivity.writingNotes,
+                    child: Text('Writing / Notes'),
+                  ),
+                  DropdownMenuItem(
+                    value: FocusActivity.computerWork,
+                    child: Text('Computer Work'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
 
-          setState(() {
-            focusActivity = value;
+                  setState(() {
+                    focusActivity = value;
 
-            // Different activities can have completely different
-            // natural head/body positions.
-            referencePose = null;
-          });
-        },
+                    // Different activities can have completely different
+                    // natural head/body positions.
+                    referencePose = null;
+                  });
+                },
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1792,107 +1604,122 @@ Widget _buildFocusSetup() {
   // ===========================================================
 
   Widget _buildActiveSetup() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _SectionTitle('Active Task Setup'),
+  final borderColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+  final dividerColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
 
-        const SizedBox(height: 6),
-
-        Text(
-          'Active mode monitors movement, inactivity, presence, and leaving the task area.',
-          style: TextStyle(
-            color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
-            fontSize: 12,
-            height: 1.35,
-          ),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _SectionTitle('Active Task Setup'),
+      const SizedBox(height: 6),
+      Text(
+        'Active mode monitors movement, inactivity, presence, and leaving the task area.',
+        style: TextStyle(
+          color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
+          fontSize: 12,
+          height: 1.35,
         ),
+      ),
+      const SizedBox(height: 12),
 
-        const SizedBox(height: 14),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor, width: .8),
+        ),
+        child: Column(
+          children: [
+            _buildExpectedActivity(),
+            Divider(height: 1, thickness: .7, color: dividerColor),
+            _buildInactivityWarning(),
+            Divider(height: 1, thickness: .7, color: dividerColor),
+            _buildBriefExitAllowance(),
+            Divider(height: 1, thickness: .7, color: dividerColor),
+            _buildRequiredObjectScan(),
+          ],
+        ),
+      ),
 
-        _buildExpectedActivity(),
-
-        const Divider(),
-
-        _buildInactivityWarning(),
-
-        const Divider(),
-
-        _buildBriefExitAllowance(),
-
-        const Divider(),
-
-        _buildRequiredObjectScan(),
-
-        const SizedBox(height: 18),
-
-        _buildCameraSetup(),
-      ],
-    );
-  }
+      const SizedBox(height: 18),
+      _buildCameraSetup(),
+    ],
+  );
+}
 
   // ===========================================================
   // WORKOUT SETUP
   // ===========================================================
 
   Widget _buildWorkoutSetup() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _SectionTitle('Workout Setup'),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _SectionTitle('Workout Setup'),
+      const SizedBox(height: 8),
 
-        const SizedBox(height: 12),
+      _buildExerciseAndGoal(),
 
-        _buildExerciseAndGoal(),
+      const SizedBox(height: 18),
 
-        const SizedBox(height: 18),
+      const _SectionTitle('Optional Settings'),
+      const SizedBox(height: 8),
 
-        const _SectionTitle('Optional Settings'),
+      _buildWorkoutOptions(),
 
-        const SizedBox(height: 10),
+      const SizedBox(height: 18),
 
-        _buildWorkoutOptions(),
-
-        const SizedBox(height: 18),
-
-        _buildCameraSetup(),
-      ],
-    );
-  }
+      _buildCameraSetup(),
+    ],
+  );
+}
 
   // ===========================================================
   // HEADER
   // ===========================================================
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        IconButton(
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
-          onPressed: () {
-            Navigator.pop(context);
-          },
-          icon: Icon(
-            Icons.arrow_back_ios_new_rounded,
-            size: 25,
-            color: widget.isDarkMode ? _T.text : Colors.black,
+    return SizedBox(
+      height: 42,
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 22,
+                color: widget.isDarkMode ? _T.text : Colors.black,
+              ),
+            ),
           ),
-        ),
-
-        const SizedBox(width: 4),
-
-        Text(
-          'New Task',
-          style: TextStyle(
-            color: widget.isDarkMode ? _T.text : Colors.black,
-            fontSize: 34,
-            height: 1,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -.7,
+          IgnorePointer(
+            child: Text(
+              'New Task',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: widget.isDarkMode ? _T.text : Colors.black,
+                fontSize: 23,
+                height: 1,
+                fontFamily: 'Nunito Sans',
+                fontWeight: FontWeight.w700,
+                letterSpacing: -.2,
+              ),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1902,13 +1729,13 @@ Widget _buildFocusSetup() {
 
   Widget _buildTaskNameField() {
     return Container(
-      height: 68,
+      height: 76,
       decoration: BoxDecoration(
         color: widget.isDarkMode ? _T.surface : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: widget.isDarkMode ? _T.border : const Color(0xFFCDD0D7),
-          width: 1.2,
+          color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+          width: .8,
         ),
       ),
       child: Row(
@@ -1919,10 +1746,10 @@ Widget _buildFocusSetup() {
               left: Radius.circular(14),
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(9, 7, 6, 7),
+              padding: const EdgeInsets.fromLTRB(8, 9, 5, 9),
               child: Row(
                 children: [
-                  _TaskIconTile(type: selectedTaskIcon, size: 50),
+                  _TaskIconTile(type: selectedTaskIcon, size: 44),
 
                   const SizedBox(width: 3),
 
@@ -1940,30 +1767,55 @@ Widget _buildFocusSetup() {
 
           Container(
             width: 1,
-            height: 40,
-            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E2E6),
+            height: 48,
+            color: widget.isDarkMode ? _T.border : const Color(0xFFECEDEF),
           ),
 
           Expanded(
-            child: TextField(
-              controller: taskNameController,
-              onChanged: _onTaskNameChanged,
-              style: TextStyle(
-                color: widget.isDarkMode ? _T.text : Colors.black,
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-              decoration: InputDecoration(
-                hintText: 'e.g. Study Session.',
-                hintStyle: TextStyle(
-                  color: widget.isDarkMode ? _T.muted : const Color(0xFF8D9099),
-                  fontSize: 16,
-                ),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 22,
-                ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 9, 10, 8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Task Name',
+                    style: TextStyle(
+                      color: widget.isDarkMode
+                          ? _T.text
+                          : const Color(0xFF30323A),
+                      fontSize: 14,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  TextField(
+                    controller: taskNameController,
+                    onChanged: _onTaskNameChanged,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: widget.isDarkMode ? _T.text : Colors.black,
+                      fontSize: 13,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. Study Session.',
+                      hintStyle: TextStyle(
+                        color: widget.isDarkMode
+                            ? _T.muted
+                            : const Color(0xFF858995),
+                        fontSize: 13,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w400,
+                      ),
+                      border: InputBorder.none,
+                      isCollapsed: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -2362,6 +2214,7 @@ Widget _buildFocusSetup() {
               style: TextStyle(
                 color: widget.isDarkMode ? _T.text : Colors.black,
                 fontSize: 18,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -2434,6 +2287,7 @@ Widget _buildFocusSetup() {
                     style: TextStyle(
                       color: widget.isDarkMode ? _T.text : Colors.black,
                       fontSize: 16,
+                      fontFamily: 'Nunito Sans',
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -2640,106 +2494,157 @@ Widget _buildFocusSetup() {
   // ===========================================================
 
   Widget _buildExpectedActivity() {
-    return _ModeSettingRow(
-      icon: Icons.bar_chart_rounded,
-      title: 'Expected Activity',
-      subtitle: 'How much movement is expected for this task.',
-      trailing: DropdownButton<ActivityLevel>(
-        value: activityLevel,
-        underline: const SizedBox.shrink(),
-        items: const [
-          DropdownMenuItem(value: ActivityLevel.light, child: Text('Light')),
-          DropdownMenuItem(
-            value: ActivityLevel.moderate,
-            child: Text('Moderate'),
+  return _ModeSettingRow(
+    icon: Icons.bar_chart_rounded,
+    title: 'Expected Activity',
+    subtitle: 'How much movement is expected for this task.',
+    trailing: SizedBox(
+      width: 118,
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+            width: .8,
           ),
-          DropdownMenuItem(value: ActivityLevel.high, child: Text('High')),
-        ],
-        onChanged: (value) {
-          if (value == null) {
-            return;
-          }
-
-          setState(() {
-            activityLevel = value;
-          });
-        },
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<ActivityLevel>(
+            value: activityLevel,
+            isExpanded: true,
+            items: const [
+              DropdownMenuItem(
+                value: ActivityLevel.light,
+                child: Text('Light'),
+              ),
+              DropdownMenuItem(
+                value: ActivityLevel.moderate,
+                child: Text('Moderate'),
+              ),
+              DropdownMenuItem(
+                value: ActivityLevel.high,
+                child: Text('High'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                activityLevel = value;
+              });
+            },
+          ),
+        ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildInactivityWarning() {
-    const options = [
-      Duration(seconds: 30),
-      Duration(minutes: 1),
-      Duration(minutes: 2),
-      Duration(minutes: 5),
-    ];
+  const options = [
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+  ];
 
-    return _ModeSettingRow(
-      icon: Icons.schedule_rounded,
-      title: 'Inactivity Warning',
-      subtitle:
-          'Warn me if activity stays below the expected level for this long.',
-      trailing: DropdownButton<Duration>(
-        value: inactivityWarning,
-        underline: const SizedBox.shrink(),
-        items: options.map((duration) {
-          return DropdownMenuItem(
-            value: duration,
-            child: Text(_durationOptionLabel(duration)),
-          );
-        }).toList(),
-        onChanged: (value) {
-          if (value == null) {
-            return;
-          }
-
-          setState(() {
-            inactivityWarning = value;
-          });
-        },
+  return _ModeSettingRow(
+    icon: Icons.schedule_rounded,
+    title: 'Inactivity Warning',
+    subtitle: 'Warn if activity stays below the expected level for this long.',
+    trailing: SizedBox(
+      width: 118,
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+            width: .8,
+          ),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<Duration>(
+            value: inactivityWarning,
+            isExpanded: true,
+            items: options.map((duration) {
+              return DropdownMenuItem(
+                value: duration,
+                child: Text(
+                  _durationOptionLabel(duration),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                inactivityWarning = value;
+              });
+            },
+          ),
+        ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildBriefExitAllowance() {
-    const options = [
-      Duration.zero,
-      Duration(seconds: 15),
-      Duration(seconds: 30),
-      Duration(minutes: 1),
-    ];
+  const options = [
+    Duration.zero,
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+  ];
 
-    return _ModeSettingRow(
-      icon: Icons.exit_to_app_rounded,
-      title: 'Brief Exit Allowance',
-      subtitle: 'Allow a short exit without immediately triggering a warning.',
-      trailing: DropdownButton<Duration>(
-        value: briefExitAllowance,
-        underline: const SizedBox.shrink(),
-        items: options.map((duration) {
-          return DropdownMenuItem(
-            value: duration,
-            child: Text(
-              duration == Duration.zero
-                  ? 'None'
-                  : _durationOptionLabel(duration),
-            ),
-          );
-        }).toList(),
-        onChanged: (value) {
-          if (value == null) {
-            return;
-          }
-
-          setState(() {
-            briefExitAllowance = value;
-          });
-        },
+  return _ModeSettingRow(
+    icon: Icons.exit_to_app_rounded,
+    title: 'Brief Exit Allowance',
+    subtitle: 'Allow a short exit before a warning is triggered.',
+    trailing: SizedBox(
+      width: 118,
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+            width: .8,
+          ),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<Duration>(
+            value: briefExitAllowance,
+            isExpanded: true,
+            items: options.map((duration) {
+              return DropdownMenuItem(
+                value: duration,
+                child: Text(
+                  duration == Duration.zero
+                      ? 'None'
+                      : _durationOptionLabel(duration),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                briefExitAllowance = value;
+              });
+            },
+          ),
+        ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Future<void> _openObjectScanner() async {
     if (!MlKitCameraImageConverter.supported) {
@@ -2772,52 +2677,97 @@ Widget _buildFocusSetup() {
   }
 
   Widget _buildRequiredObjectScan() {
-    return Column(
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 9),
+    child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _ModeSettingRow(
-          icon: Icons.view_in_ar_rounded,
-          title: 'Required Object / Tool',
-          subtitle: selectedObjectScans.isEmpty
-              ? 'Optional — scan an object or tool that must appear.'
-              : '${selectedObjectScans.length}/3 saved objects selected.',
-          trailing: OutlinedButton.icon(
-            onPressed: _openObjectScanner,
-            icon: const Icon(Icons.view_in_ar_rounded, size: 18),
-            label: const Text('3D Scan'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _C.red,
-              side: const BorderSide(color: _C.red),
+        Row(
+          children: [
+            const Icon(Icons.view_in_ar_rounded, size: 27),
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Required Object / Tool',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    selectedObjectScans.isEmpty
+                        ? 'Optional — scan an object or tool that must appear.'
+                        : '${selectedObjectScans.length}/3 saved objects selected.',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF777A84),
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+
+            const SizedBox(width: 10),
+
+            SizedBox(
+              height: 40,
+              child: OutlinedButton(
+                onPressed: _openObjectScanner,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _C.red,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  side: const BorderSide(
+                    color: Color(0xFFE1E3E7),
+                    width: .8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  selectedObjectScans.isEmpty ? 'Add' : 'Edit',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
         ),
 
         if (selectedObjectScans.isNotEmpty) ...[
-          const SizedBox(height: 10),
-
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: selectedObjectScans
-                .map(
-                  (scan) => Chip(
-                    label: Text(scan.name),
-                    deleteIcon: const Icon(Icons.close_rounded, size: 17),
-                    onDeleted: () {
-                      setState(() {
-                        selectedObjectScans.removeWhere(
-                          (item) => item.id == scan.id,
-                        );
-                      });
-                    },
-                  ),
-                )
-                .toList(),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 39),
+            child: Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: selectedObjectScans.map((scan) {
+                return Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(scan.name),
+                  deleteIcon: const Icon(Icons.close_rounded, size: 16),
+                  onDeleted: () {
+                    setState(() {
+                      selectedObjectScans.removeWhere(
+                        (item) => item.id == scan.id,
+                      );
+                    });
+                  },
+                );
+              }).toList(),
+            ),
           ),
         ],
       ],
-    );
-  }
+    ),
+  );
+}
 
   String _durationOptionLabel(Duration duration) {
     if (duration.inMinutes >= 1 && duration.inSeconds % 60 == 0) {
@@ -2879,7 +2829,8 @@ Widget _buildFocusSetup() {
             color: widget.isDarkMode ? _T.surface : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+              color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+              width: .8,
             ),
           ),
           child: Column(
@@ -2894,7 +2845,7 @@ Widget _buildFocusSetup() {
                 onTap: _toggleStayInPosition,
               ),
 
-              const Divider(height: 1),
+              const Divider(height: 1, thickness: .7, color: Color(0xFFECEDEF)),
 
               _VerificationRow(
                 imagePath: 'assets/images/icons/object_in_frame.png',
@@ -2925,8 +2876,7 @@ Widget _buildFocusSetup() {
             child: Row(
               children: [
                 _AssetIconBox(
-                  imagePath:
-                      'assets/images/icons/dual_verification.png',
+                  imagePath: 'assets/images/icons/dual_verification.png',
                   dark: widget.isDarkMode,
                 ),
 
@@ -2941,6 +2891,7 @@ Widget _buildFocusSetup() {
                           Text(
                             'Dual Verification',
                             style: TextStyle(
+                              fontFamily: 'Nunito Sans',
                               fontWeight: FontWeight.w800,
                               fontSize: 15,
                             ),
@@ -2982,42 +2933,41 @@ Widget _buildFocusSetup() {
   // ===========================================================
 
   String get _referenceDescription {
-  if (stayInPosition) {
-    if (referencePose != null) {
-      return 'Your focus position has been calibrated. Tap it to recalibrate.';
+    if (stayInPosition) {
+      if (referencePose != null) {
+        return 'Your focus position has been calibrated. Tap it to recalibrate.';
+      }
+
+      return 'Choose a calibration delay, return to your task, and TaskProof will learn your natural working position.';
     }
 
-    return 'Choose a calibration delay, return to your task, and TaskProof will learn your natural working position.';
+    if (objectInFrame) {
+      return 'Scan or select the objects that must remain visible.';
+    }
+
+    return 'Select a verification rule first.';
   }
 
-  if (objectInFrame) {
-    return 'Scan or select the objects that must remain visible.';
-  }
-
-  return 'Select a verification rule first.';
-}
-
-Widget _buildReferenceSetup() {
+  Widget _buildReferenceSetup() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
         color: widget.isDarkMode ? _T.surface : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
+          color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+          width: .8,
         ),
       ),
       child: Column(
         children: [
           if (stayInPosition)
             _ReferenceRow(
-              imagePath:
-                  'assets/images/icons/reference_position.png',
+              imagePath: 'assets/images/icons/reference_position.png',
               title: 'Reference Position',
               subtitle: referencePose != null
-              ? 'Calibrated — tap to recalibrate'
-              : 'Set a delay and let TaskProof learn your natural position.',
+                  ? 'Calibrated — tap to recalibrate'
+                  : 'Set a delay and let TaskProof learn your natural position.',
               complete: referencePose != null,
               dark: widget.isDarkMode,
               onTap: _captureReferencePosition,
@@ -3030,22 +2980,30 @@ Widget _buildReferenceSetup() {
             ),
 
           if (objectInFrame)
-      _ReferenceRow(
-        icon: Icons.view_in_ar_rounded,
-        title: 'Required Objects',
-        subtitle: selectedObjectScans.isEmpty
-            ? 'Scan or select a required object'
-            : '${selectedObjectScans.length}/3 objects selected',
-        complete: selectedObjectScans.isNotEmpty,
-        dark: widget.isDarkMode,
-        onTap: _openObjectScanner,
-      ),
+            _ReferenceRow(
+              icon: Icons.view_in_ar_rounded,
+              title: 'Required Objects',
+              subtitle: selectedObjectScans.isEmpty
+                  ? 'Scan or select a required object'
+                  : '${selectedObjectScans.length}/3 objects selected',
+              complete: selectedObjectScans.isNotEmpty,
+              dark: widget.isDarkMode,
+              onTap: _openObjectScanner,
+            ),
 
           if (!stayInPosition && !objectInFrame)
             const Padding(
               padding: EdgeInsets.all(22),
               child: Text('Choose a verification rule above.'),
             ),
+
+          Divider(
+            height: 1,
+            thickness: .7,
+            color: widget.isDarkMode ? _T.border : const Color(0xFFECEDEF),
+          ),
+
+          _buildAlarmRow(),
         ],
       ),
     );
@@ -3056,36 +3014,34 @@ Widget _buildReferenceSetup() {
   // ===========================================================
 
   Future<void> _captureReferencePosition() async {
-  if (!MlKitCameraImageConverter.supported) {
-    _showMessage(
-      'Position verification must be tested on an Android or iPhone device, not Chrome.',
+    if (!MlKitCameraImageConverter.supported) {
+      _showMessage(
+        'Position verification must be tested on an Android or iPhone device, not Chrome.',
+      );
+
+      return;
+    }
+
+    final result = await Navigator.push<PoseReference>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReferencePositionPage(
+          isDarkMode: widget.isDarkMode,
+          focusActivity: focusActivity,
+        ),
+      ),
     );
 
-    return;
+    if (result == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      referencePose = result;
+    });
+
+    _showMessage('Reference position calibrated.');
   }
-
-  final result = await Navigator.push<PoseReference>(
-    context,
-    MaterialPageRoute(
-      builder: (context) => ReferencePositionPage(
-        isDarkMode: widget.isDarkMode,
-        focusActivity: focusActivity,
-      ),
-    ),
-  );
-
-  if (result == null || !mounted) {
-    return;
-  }
-
-  setState(() {
-    referencePose = result;
-  });
-
-  _showMessage(
-    'Reference position calibrated.',
-  );
-}
 
   // ===========================================================
   // ALARM
@@ -3226,227 +3182,27 @@ Widget _buildReferenceSetup() {
   }
 
   Widget _buildExerciseAndGoal() {
-    final exercises = _availableWorkoutExercises;
+  final exercises = _availableWorkoutExercises;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  final borderColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+  final dividerColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
+
+  return Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      color: widget.isDarkMode ? _T.surface : Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: borderColor, width: .8),
+    ),
+    child: Column(
       children: [
-        const Text(
-          'Exercise',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-        ),
-
-        const SizedBox(height: 8),
-
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
-            ),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<WorkoutExercise>(
-              value: selectedExercise,
-              isExpanded: true,
-              items: exercises.map((exercise) {
-                return DropdownMenuItem(
-                  value: exercise,
-                  child: Row(
-                    children: [
-                      Icon(
-                        _workoutExerciseIcon(exercise),
-                        size: 23,
-                        color: _C.red,
-                      ),
-
-                      const SizedBox(width: 10),
-
-                      Text(_workoutExerciseLabel(exercise)),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value == null) {
-                  return;
-                }
-
-                setState(() {
-                  selectedExercise = value;
-                });
-              },
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 18),
-
-        const Text(
-          'Goal (Repetitions)',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-        ),
-
-        const SizedBox(height: 8),
-
-        Center(
-          child: Container(
-            width: 120,
-            height: 154,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            decoration: BoxDecoration(
-              color: widget.isDarkMode ? _T.surface : Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
-                width: 1.2,
-              ),
-            ),
-            child: ValueListenableBuilder<int>(
-              valueListenable: _repGoalValue,
-              builder: (context, value, child) {
-                return _RepGoalWheel(
-                  controller: _repGoalController,
-                  selectedValue: value,
-                  onChanged: (newValue) {
-                    workoutRepGoal = newValue;
-                    _repGoalValue.value = newValue;
-                  },
-                );
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildWorkoutOptions() {
-    const restOptions = [
-      Duration(seconds: 15),
-      Duration(seconds: 30),
-      Duration(minutes: 1),
-      Duration(minutes: 2),
-    ];
-
-    return Container(
-      decoration: BoxDecoration(
-        color: widget.isDarkMode ? _T.surface : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
-        ),
-      ),
-      child: Column(
-        children: [
-          SwitchListTile(
-            value: workoutFormChecking,
-            onChanged: isPro
-                ? (value) {
-                    setState(() {
-                      workoutFormChecking = value;
-                    });
-                  }
-                : (_) {
-                    _showMessage('Form Checking is a TaskProof Pro feature.');
-                  },
-            secondary: const Icon(Icons.person_search_rounded, color: _C.red),
-            title: const Row(
-              children: [
-                Text(
-                  'Form Checking',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
-                SizedBox(width: 7),
-                _ProBadge(),
-              ],
-            ),
-            subtitle: const Text('Get extra feedback on your form.'),
-          ),
-
-          if (workoutMovementType != WorkoutMovementType.repetitions) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.timer_outlined, size: 24),
-
-                  const SizedBox(width: 14),
-
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Rest Limit',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        Text(
-                          'Maximum rest time between exercise activity.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF777A84),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  DropdownButton<Duration>(
-                    value: workoutRestLimit,
-                    underline: const SizedBox.shrink(),
-                    items: restOptions.map((duration) {
-                      return DropdownMenuItem(
-                        value: duration,
-                        child: Text(_durationOptionLabel(duration)),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-
-                      setState(() {
-                        workoutRestLimit = value;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCameraSetup() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _SectionTitle('Camera Setup'),
-
-        const SizedBox(height: 8),
-
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-          decoration: BoxDecoration(
-            color: widget.isDarkMode ? _T.surface : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
-            ),
-          ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             children: [
-              _PinkIcon(
-                icon: Icons.photo_camera_outlined,
-                dark: widget.isDarkMode,
-              ),
-
+              const Icon(Icons.fitness_center_rounded, size: 27),
               const SizedBox(width: 12),
 
               const Expanded(
@@ -3454,38 +3210,388 @@ Widget _buildReferenceSetup() {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Position Camera',
+                      'Exercise',
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: 14,
+                        fontFamily: 'Nunito Sans',
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-
                     SizedBox(height: 2),
-
                     Text(
-                      'Place the camera so the required area is visible.',
-                      style: TextStyle(fontSize: 12, color: Color(0xFF777A84)),
+                      'Choose the movement TaskProof should track.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF777A84),
+                        height: 1.25,
+                      ),
                     ),
                   ],
                 ),
               ),
 
-              OutlinedButton.icon(
-                onPressed: _openCameraPreview,
-                icon: const Icon(Icons.visibility_outlined, size: 18),
-                label: const Text('Preview'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _C.red,
-                  side: const BorderSide(color: _C.red),
+              const SizedBox(width: 10),
+
+              SizedBox(
+                width: 146,
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: widget.isDarkMode ? _T.surface : Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: borderColor, width: .8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<WorkoutExercise>(
+                      value: selectedExercise,
+                      isExpanded: true,
+                      items: exercises.map((exercise) {
+                        return DropdownMenuItem(
+                          value: exercise,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _workoutExerciseIcon(exercise),
+                                size: 20,
+                                color: _C.red,
+                              ),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: Text(
+                                  _workoutExerciseLabel(exercise),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+
+                        setState(() {
+                          selectedExercise = value;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        Divider(height: 1, thickness: .7, color: dividerColor),
+
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            children: [
+              const Icon(Icons.flag_outlined, size: 27),
+              const SizedBox(width: 12),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Goal',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Target number of repetitions.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF777A84),
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Container(
+                width: 140,
+                height: 94,
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                decoration: BoxDecoration(
+                  color: widget.isDarkMode ? _T.surface : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: borderColor, width: .8),
+                ),
+                child: ValueListenableBuilder<int>(
+                  valueListenable: _repGoalValue,
+                  builder: (context, value, child) {
+                    return _RepGoalWheel(
+                      controller: _repGoalController,
+                      selectedValue: value,
+                      onChanged: (newValue) {
+                        workoutRepGoal = newValue;
+                        _repGoalValue.value = newValue;
+                      },
+                    );
+                  },
                 ),
               ),
             ],
           ),
         ),
       ],
-    );
-  }
+    ),
+  );
+}
+
+  Widget _buildWorkoutOptions() {
+  const restOptions = [
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+  ];
+
+  final borderColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+  final dividerColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
+
+  return Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      color: widget.isDarkMode ? _T.surface : Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: borderColor, width: .8),
+    ),
+    child: Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            children: [
+              const Icon(Icons.person_search_rounded, size: 27),
+              const SizedBox(width: 12),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Form Checking',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'Nunito Sans',
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(width: 7),
+                        _ProBadge(),
+                      ],
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Get extra feedback on your form.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF777A84),
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Switch(
+                value: workoutFormChecking,
+                activeThumbColor: _C.red,
+                onChanged: isPro
+                    ? (value) {
+                        setState(() {
+                          workoutFormChecking = value;
+                        });
+                      }
+                    : (_) {
+                        _showMessage(
+                          'Form Checking is a TaskProof Pro feature.',
+                        );
+                      },
+              ),
+            ],
+          ),
+        ),
+
+        if (workoutMovementType != WorkoutMovementType.repetitions) ...[
+          Divider(height: 1, thickness: .7, color: dividerColor),
+
+          _ModeSettingRow(
+            icon: Icons.timer_outlined,
+            title: 'Rest Limit',
+            subtitle: 'Maximum rest time between exercise activity.',
+            trailing: SizedBox(
+              width: 118,
+              child: Container(
+                height: 44,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: widget.isDarkMode ? _T.surface : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: borderColor, width: .8),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<Duration>(
+                    value: workoutRestLimit,
+                    isExpanded: true,
+                    items: restOptions.map((duration) {
+                      return DropdownMenuItem(
+                        value: duration,
+                        child: Text(
+                          _durationOptionLabel(duration),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+
+                      setState(() {
+                        workoutRestLimit = value;
+                      });
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+  Widget _buildCameraSetup() {
+  final borderColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7);
+  final dividerColor =
+      widget.isDarkMode ? _T.border : const Color(0xFFECEDEF);
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _SectionTitle('Camera Setup'),
+      const SizedBox(height: 8),
+
+      Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: widget.isDarkMode ? _T.surface : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor, width: .8),
+        ),
+        child: Column(
+          children: [
+            InkWell(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(12),
+              ),
+              onTap: _openCameraPreview,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 7,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: widget.isDarkMode
+                            ? const Color(0xFF202126)
+                            : const Color(0xFFF7F7F9),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.photo_camera_outlined,
+                        color: _C.red,
+                        size: 27,
+                      ),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Position Camera',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            selectedMode == TaskMode.workout
+                                ? 'Preview framing and choose the best camera orientation.'
+                                : 'Preview the camera and make sure the task area is visible.',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF777A84),
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 10),
+
+                    if (selectedMode == TaskMode.workout)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Text(
+                          workoutCameraOrientation ==
+                                  WorkoutCameraOrientation.landscape
+                              ? 'Landscape'
+                              : 'Portrait',
+                          style: const TextStyle(
+                            color: Color(0xFF777A84),
+                            fontSize: 11,
+                            fontFamily: 'Nunito Sans',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+
+                    const Icon(Icons.chevron_right_rounded, size: 20),
+                  ],
+                ),
+              ),
+            ),
+
+            Divider(height: 1, thickness: .7, color: dividerColor),
+
+            _buildAlarmRow(),
+          ],
+        ),
+      ),
+    ],
+  );
+}
 
   Future<void> _openCameraPreview() async {
     switch (selectedMode) {
@@ -3510,26 +3616,26 @@ Widget _buildReferenceSetup() {
           return;
         }
         final selectedOrientation =
-        await Navigator.push<WorkoutCameraOrientation>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => WorkoutCameraPreviewPage(
-          isDarkMode: widget.isDarkMode,
-          exercise: selectedExercise,
-          movementType: workoutMovementType,
-          sensitivity: sensitivity,
-          initialOrientation: workoutCameraOrientation,
-        ),
-      ),
-    );
+            await Navigator.push<WorkoutCameraOrientation>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => WorkoutCameraPreviewPage(
+                  isDarkMode: widget.isDarkMode,
+                  exercise: selectedExercise,
+                  movementType: workoutMovementType,
+                  sensitivity: sensitivity,
+                  initialOrientation: workoutCameraOrientation,
+                ),
+              ),
+            );
 
-    if (selectedOrientation != null && mounted) {
-      setState(() {
-        workoutCameraOrientation = selectedOrientation;
-      });
-    }
+        if (selectedOrientation != null && mounted) {
+          setState(() {
+            workoutCameraOrientation = selectedOrientation;
+          });
+        }
 
-    return;
+        return;
 
       case TaskMode.focus:
         await _captureReferencePosition();
@@ -3541,34 +3647,61 @@ Widget _buildReferenceSetup() {
   // ALARM
   // ===========================================================
 
+  // ignore: unused_element
   Widget _buildAlarmSound() {
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: _selectAlarm,
-      child: Container(
-        height: 58,
-        padding: const EdgeInsets.symmetric(horizontal: 13),
-        decoration: BoxDecoration(
-          color: widget.isDarkMode ? _T.surface : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: widget.isDarkMode ? _T.border : const Color(0xFFCACDD5),
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        color: widget.isDarkMode ? _T.surface : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: widget.isDarkMode ? _T.border : const Color(0xFFE1E3E7),
+          width: .8,
         ),
+      ),
+      child: _buildAlarmRow(),
+    );
+  }
+
+  Widget _buildAlarmRow() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: _selectAlarm,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         child: Row(
           children: [
-            _AssetIconBox(
-              imagePath: 'assets/images/icons/default_alarm.png',
-              dark: widget.isDarkMode,
+            Container(
+              width: 44,
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: widget.isDarkMode
+                    ? const Color(0xFF202126)
+                    : const Color(0xFFF7F7F9),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Image.asset(
+                'assets/images/icons/default_alarm.png',
+                width: 32,
+                height: 32,
+                fit: BoxFit.contain,
+              ),
             ),
 
-            const SizedBox(width: 13),
+            const SizedBox(width: 12),
 
             Expanded(
-              child: Text(selectedAlarm, style: const TextStyle(fontSize: 16)),
+              child: Text(
+                selectedAlarm,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontFamily: 'Nunito Sans',
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
 
-            const Icon(Icons.chevron_right_rounded),
+            const Icon(Icons.chevron_right_rounded, size: 20),
           ],
         ),
       ),
@@ -3592,7 +3725,10 @@ Widget _buildReferenceSetup() {
                 final selected = selectedAlarm == alarm;
 
                 return ListTile(
-                  title: Text(alarm),
+                  title: Text(
+                    alarm,
+                    style: TextStyle(fontFamily: 'Nunito Sans'),
+                  ),
                   trailing: selected
                       ? const Icon(Icons.check_rounded, color: _C.red)
                       : null,
@@ -3617,201 +3753,150 @@ Widget _buildReferenceSetup() {
   // ===========================================================
 
   Widget _buildSensitivity() {
-  const sensitivityRed = Color(0xFFFF111C);
-  const sensitivityOrange = Color(0xFFFF8A00);
+    const sensitivityRed = Color(0xFFFF111C);
+    const sensitivityOrange = Color(0xFFFF8A00);
 
-  return ValueListenableBuilder<double>(
-    valueListenable: _sensitivityValue,
-    builder: (context, value, child) {
-      final thumbColor =
-          Color.lerp(
-            sensitivityRed,
-            sensitivityOrange,
-            value,
-          ) ??
-          sensitivityRed;
+    return ValueListenableBuilder<double>(
+      valueListenable: _sensitivityValue,
+      builder: (context, value, child) {
+        final thumbColor =
+            Color.lerp(sensitivityRed, sensitivityOrange, value) ??
+            sensitivityRed;
 
-      return Column(
-        children: [
-          SizedBox(
-            height: 48,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned(
-                  left: 24,
-                  right: 24,
-                  child: Container(
-                    height: 5,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(999),
-                      gradient: const LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        colors: [
-                          sensitivityRed,
-                          sensitivityOrange,
+        return Column(
+          children: [
+            SizedBox(
+              height: 48,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned(
+                    left: 24,
+                    right: 24,
+                    child: Container(
+                      height: 5,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [sensitivityRed, sensitivityOrange],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: widget.isDarkMode
+                                ? Colors.black.withValues(alpha: .24)
+                                : Colors.black.withValues(alpha: .08),
+                            blurRadius: 5,
+                            offset: const Offset(0, 1),
+                          ),
                         ],
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: widget.isDarkMode
-                              ? Colors.black.withValues(
-                                  alpha: .24,
-                                )
-                              : Colors.black.withValues(
-                                  alpha: .08,
-                                ),
-                          blurRadius: 5,
-                          offset: const Offset(
-                            0,
-                            1,
-                          ),
-                        ),
-                      ],
                     ),
                   ),
-                ),
 
-                SliderTheme(
-                  data: SliderTheme.of(
-                    context,
-                  ).copyWith(
-                    trackHeight: 5,
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 5,
 
-                    activeTrackColor:
-                        Colors.transparent,
+                      activeTrackColor: Colors.transparent,
 
-                    inactiveTrackColor:
-                        Colors.transparent,
+                      inactiveTrackColor: Colors.transparent,
 
-                    thumbColor: thumbColor,
+                      thumbColor: thumbColor,
 
-                    overlayColor:
-                        thumbColor.withValues(
-                      alpha: .14,
-                    ),
+                      overlayColor: thumbColor.withValues(alpha: .14),
 
-                    thumbShape:
-                        const RoundSliderThumbShape(
-                      enabledThumbRadius: 9,
-                    ),
-
-                    overlayShape:
-                        const RoundSliderOverlayShape(
-                      overlayRadius: 18,
-                    ),
-                  ),
-                  child: Slider(
-                    value: value,
-                    min: 0,
-                    max: 1,
-                    onChanged: (
-                      nextValue,
-                    ) {
-                      sensitivity =
-                          nextValue;
-
-                      _sensitivityValue.value =
-                          nextValue;
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: 3,
-            ),
-            child: Row(
-              mainAxisAlignment:
-                  MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Low',
-                  style: TextStyle(
-                    fontSize: 12,
-                  ),
-                ),
-                Text(
-                  'Medium',
-                  style: TextStyle(
-                    fontSize: 12,
-                  ),
-                ),
-                Text(
-                  'High',
-                  style: TextStyle(
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(
-            height: 6,
-          ),
-
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              _sensitivityDescription,
-              style: TextStyle(
-                color: widget.isDarkMode
-                    ? _T.muted
-                    : const Color(
-                        0xFF676A74,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 9,
                       ),
-                fontSize: 12,
-                height: 1.35,
+
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 18,
+                      ),
+                    ),
+                    child: Slider(
+                      value: value,
+                      min: 0,
+                      max: 1,
+                      onChanged: (nextValue) {
+                        sensitivity = nextValue;
+
+                        _sensitivityValue.value = nextValue;
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
-      );
-    },
-  );
-}
+
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 3),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Low', style: TextStyle(fontSize: 12)),
+                  Text('Medium', style: TextStyle(fontSize: 12)),
+                  Text('High', style: TextStyle(fontSize: 12)),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 6),
+
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _sensitivityDescription,
+                style: TextStyle(
+                  color: widget.isDarkMode ? _T.muted : const Color(0xFF676A74),
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   String get _sensitivityDescription {
-  if (selectedMode == TaskMode.active) {
-    if (sensitivity < .34) {
-      return 'Low: allows more inactivity and movement variation.';
+    if (selectedMode == TaskMode.active) {
+      if (sensitivity < .34) {
+        return 'Low: allows more inactivity and movement variation.';
+      }
+
+      if (sensitivity < .67) {
+        return 'Medium: balanced movement and inactivity detection.';
+      }
+
+      return 'High: notices smaller activity changes more quickly.';
     }
 
-    if (sensitivity < .67) {
-      return 'Medium: balanced movement and inactivity detection.';
+    if (selectedMode == TaskMode.workout) {
+      if (sensitivity < .34) {
+        return 'Low: more forgiving workout movement detection.';
+      }
+
+      if (sensitivity < .67) {
+        return 'Medium: balanced exercise movement detection.';
+      }
+
+      return 'High: detects smaller exercise movement differences more strictly.';
     }
-
-    return 'High: notices smaller activity changes more quickly.';
-  }
-
-  if (selectedMode == TaskMode.workout) {
-    if (sensitivity < .34) {
-      return 'Low: more forgiving workout movement detection.';
-    }
-
-    if (sensitivity < .67) {
-      return 'Medium: balanced exercise movement detection.';
-    }
-
-    return 'High: detects smaller exercise movement differences more strictly.';
-  }
 
     // Focus mode
-   // Focus mode
-  if (sensitivity < .34) {
-    return 'Low: larger focus area, more movement tolerance, and a longer grace period.';
-  }
+    // Focus mode
+    if (sensitivity < .34) {
+      return 'Low: larger focus area, more movement tolerance, and a longer grace period.';
+    }
 
-  if (sensitivity < .67) {
-    return 'Medium: balanced area, attention, and sustained behavior-change detection.';
-  }
+    if (sensitivity < .67) {
+      return 'Medium: balanced area, attention, and sustained behavior-change detection.';
+    }
 
-  return 'High: tighter focus area and faster attention/behavior checks while still allowing normal task movement.';
+    return 'High: tighter focus area and faster attention/behavior checks while still allowing normal task movement.';
   }
   // ===========================================================
   // PRO DIALOG
@@ -3923,10 +4008,9 @@ Widget _buildReferenceSetup() {
 
       poseReference: selectedMode == TaskMode.focus ? referencePose : null,
 
-      requiredObjectIds:
-          selectedMode == TaskMode.focus && objectInFrame
-              ? selectedObjectScans.map((scan) => scan.id).toList()
-              : const [],
+      requiredObjectIds: selectedMode == TaskMode.focus && objectInFrame
+          ? selectedObjectScans.map((scan) => scan.id).toList()
+          : const [],
 
       activeConfig: selectedMode == TaskMode.active
           ? ActiveTaskConfig(
@@ -3939,17 +4023,17 @@ Widget _buildReferenceSetup() {
             )
           : null,
 
-        workoutConfig: selectedMode == TaskMode.workout
-      ? WorkoutTaskConfig(
-          movementType: workoutMovementType,
-          exercise: selectedExercise,
-          repGoal: workoutRepGoal,
-          targetDuration: workoutTargetDuration,
-          restLimit: workoutRestLimit,
-          formChecking: workoutFormChecking,
-          cameraOrientation: workoutCameraOrientation,
-        )
-      : null,
+      workoutConfig: selectedMode == TaskMode.workout
+          ? WorkoutTaskConfig(
+              movementType: workoutMovementType,
+              exercise: selectedExercise,
+              repGoal: workoutRepGoal,
+              targetDuration: workoutTargetDuration,
+              restLimit: workoutRestLimit,
+              formChecking: workoutFormChecking,
+              cameraOrientation: workoutCameraOrientation,
+            )
+          : null,
 
       status: scheduleEnabled ? TaskStatus.scheduled : TaskStatus.ready,
 
@@ -3989,14 +4073,11 @@ Widget _buildReferenceSetup() {
   }
 }
 
-  // =============================================================
-  // REFERENCE POSITION CAMERA PAGE
-  // =============================================================
+// =============================================================
+// REFERENCE POSITION CAMERA PAGE
+// =============================================================
 
-  enum _ReferenceCalibrationMode {
-    quick,
-    countdown,
-  }
+enum _ReferenceCalibrationMode { quick, countdown }
 
 class ReferencePositionPage extends StatefulWidget {
   const ReferencePositionPage({
@@ -4010,8 +4091,7 @@ class ReferencePositionPage extends StatefulWidget {
   final FocusActivity focusActivity;
 
   @override
-  State<ReferencePositionPage> createState() =>
-      _ReferencePositionPageState();
+  State<ReferencePositionPage> createState() => _ReferencePositionPageState();
 }
 
 class _ReferencePositionPageState extends State<ReferencePositionPage>
@@ -4048,21 +4128,17 @@ class _ReferencePositionPageState extends State<ReferencePositionPage>
 
   DateTime _lastFaceProcessed = DateTime.fromMillisecondsSinceEpoch(0);
 
- List<Face> _cachedFaces = const [];
+  List<Face> _cachedFaces = const [];
 
+  final List<PoseReference> _recentCalibrationSamples = <PoseReference>[];
 
-final List<PoseReference> _recentCalibrationSamples =
-    <PoseReference>[];
+  final ValueNotifier<bool> _positionDetected = ValueNotifier(false);
 
-final ValueNotifier<bool> _positionDetected =
-    ValueNotifier(false);
+  // ===========================================================
+  // CALIBRATION TIMING
+  // ===========================================================
 
-// ===========================================================
-// CALIBRATION TIMING
-// ===========================================================
-
-  _ReferenceCalibrationMode _calibrationMode =
-      _ReferenceCalibrationMode.quick;
+  _ReferenceCalibrationMode _calibrationMode = _ReferenceCalibrationMode.quick;
 
   // Used when Countdown is selected.
   int _customCountdownSeconds = 10;
@@ -4077,8 +4153,7 @@ final ValueNotifier<bool> _positionDetected =
   bool _collectingCalibration = false;
 
   bool get _calibrationInProgress =>
-      _countdownRemaining != null ||
-      _collectingCalibration;
+      _countdownRemaining != null || _collectingCalibration;
 
   String _status = 'Preparing camera...';
 
@@ -4116,18 +4191,18 @@ final ValueNotifier<bool> _positionDetected =
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
-    state == AppLifecycleState.inactive) {
-    _lifecycleActive = false;
-    _acceptFrames = false;
+        state == AppLifecycleState.inactive) {
+      _lifecycleActive = false;
+      _acceptFrames = false;
 
-    _cancelCalibration(silent: true);
+      _cancelCalibration(silent: true);
 
-    _setCurrentPose(null);
+      _setCurrentPose(null);
 
-    unawaited(_disposeCamera());
+      unawaited(_disposeCamera());
 
-    return;
-  }
+      return;
+    }
 
     if (state == AppLifecycleState.resumed) {
       _lifecycleActive = true;
@@ -4246,7 +4321,7 @@ final ValueNotifier<bool> _positionDetected =
         _initializing = false;
 
         _status =
-        'Position the phone, then choose how long you need before calibration begins.';
+            'Position the phone, then choose how long you need before calibration begins.';
       });
     } on CameraException catch (error) {
       await _disposeCamera();
@@ -4431,77 +4506,73 @@ final ValueNotifier<bool> _positionDetected =
     }
   }
 
-String get _calibrationActivityInstruction {
-  return switch (widget.focusActivity) {
-    FocusActivity.general =>
-      'Use your normal focus position and continue naturally.',
+  String get _calibrationActivityInstruction {
+    return switch (widget.focusActivity) {
+      FocusActivity.general =>
+        'Use your normal focus position and continue naturally.',
 
-    FocusActivity.reading =>
-      'Look naturally at your book or reading material.',
+      FocusActivity.reading =>
+        'Look naturally at your book or reading material.',
 
-    FocusActivity.writingNotes =>
-      'Return to your normal writing position and look at your notes.',
+      FocusActivity.writingNotes =>
+        'Return to your normal writing position and look at your notes.',
 
-    FocusActivity.computerWork =>
-      'Look naturally at your computer and continue as if you were working.',
-  };
-}
-
-String get _countdownInstruction {
-  return switch (widget.focusActivity) {
-    FocusActivity.general =>
-      'Return to your normal focus position.',
-
-    FocusActivity.reading =>
-      'Return to your reading position and look at your reading material.',
-
-    FocusActivity.writingNotes =>
-      'Return to your writing position and look at your notes.',
-
-    FocusActivity.computerWork =>
-      'Return to your computer and look at the screen naturally.',
-  };
-}
-
-void _startCalibration() {
-  final controller = _controller;
-
-  if (_disposed ||
-      _initializing ||
-      controller == null ||
-      !controller.value.isInitialized ||
-      _calibrationInProgress) {
-    return;
+      FocusActivity.computerWork =>
+        'Look naturally at your computer and continue as if you were working.',
+    };
   }
 
-  _calibrationCountdownTimer?.cancel();
+  String get _countdownInstruction {
+    return switch (widget.focusActivity) {
+      FocusActivity.general => 'Return to your normal focus position.',
 
-  _recentCalibrationSamples.clear();
+      FocusActivity.reading =>
+        'Return to your reading position and look at your reading material.',
 
-  final delaySeconds =
-      _calibrationMode == _ReferenceCalibrationMode.quick
-          ? 3
-          : _customCountdownSeconds;
+      FocusActivity.writingNotes =>
+        'Return to your writing position and look at your notes.',
 
-  setState(() {
-    _collectingCalibration = false;
-    _countdownRemaining = delaySeconds;
+      FocusActivity.computerWork =>
+        'Return to your computer and look at the screen naturally.',
+    };
+  }
 
-    _status =
-        '$_countdownInstruction Calibration begins in $delaySeconds seconds.';
-  });
+  void _startCalibration() {
+    final controller = _controller;
 
-  _calibrationCountdownTimer =
-      Timer.periodic(
-    const Duration(seconds: 1),
-    (timer) {
+    if (_disposed ||
+        _initializing ||
+        controller == null ||
+        !controller.value.isInitialized ||
+        _calibrationInProgress) {
+      return;
+    }
+
+    _calibrationCountdownTimer?.cancel();
+
+    _recentCalibrationSamples.clear();
+
+    final delaySeconds = _calibrationMode == _ReferenceCalibrationMode.quick
+        ? 3
+        : _customCountdownSeconds;
+
+    setState(() {
+      _collectingCalibration = false;
+      _countdownRemaining = delaySeconds;
+
+      _status =
+          '$_countdownInstruction Calibration begins in $delaySeconds seconds.';
+    });
+
+    _calibrationCountdownTimer = Timer.periodic(const Duration(seconds: 1), (
+      timer,
+    ) {
       if (!mounted || _disposed) {
         timer.cancel();
         return;
       }
 
-      final current =
-          _countdownRemaining;
+      final current = _countdownRemaining;
 
       if (current == null) {
         timer.cancel();
@@ -4523,8 +4594,7 @@ void _startCalibration() {
           _countdownRemaining = null;
           _collectingCalibration = true;
 
-          _status =
-              'Calibrating... $_calibrationActivityInstruction';
+          _status = 'Calibrating... $_calibrationActivityInstruction';
         });
 
         return;
@@ -4533,908 +4603,603 @@ void _startCalibration() {
       setState(() {
         _countdownRemaining = next;
 
-        _status =
-            '$_countdownInstruction Calibration begins in $next seconds.';
+        _status = '$_countdownInstruction Calibration begins in $next seconds.';
       });
-    },
-  );
-}
-
-void _cancelCalibration({
-  bool silent = false,
-}) {
-  _calibrationCountdownTimer?.cancel();
-  _calibrationCountdownTimer = null;
-
-  _countdownRemaining = null;
-  _collectingCalibration = false;
-
-  _recentCalibrationSamples.clear();
-
-  if (!silent &&
-      mounted &&
-      !_disposed) {
-    setState(() {
-      _status =
-          'Calibration cancelled. Choose when you are ready.';
     });
   }
-}
 
-void _finishCalibration(
-  PoseReference reference,
-) {
-  if (!mounted ||
-      _disposed ||
-      !_collectingCalibration) {
-    return;
+  void _cancelCalibration({bool silent = false}) {
+    _calibrationCountdownTimer?.cancel();
+    _calibrationCountdownTimer = null;
+
+    _countdownRemaining = null;
+    _collectingCalibration = false;
+
+    _recentCalibrationSamples.clear();
+
+    if (!silent && mounted && !_disposed) {
+      setState(() {
+        _status = 'Calibration cancelled. Choose when you are ready.';
+      });
+    }
   }
 
-  // Prevent another camera frame from completing it twice.
-  _collectingCalibration = false;
-
-  _calibrationCountdownTimer?.cancel();
-  _calibrationCountdownTimer = null;
-
-
-  Navigator.pop(context, reference);
-}
-
-void _setCurrentPose(
-  PoseReference? snapshot,
-) {
-  final personVisible =
-      snapshot != null;
-
-  if (_positionDetected.value !=
-      personVisible) {
-    _positionDetected.value =
-        personVisible;
-  }
-
-  // =========================================================
-  // NOT CALIBRATING
-  // =========================================================
-
-  if (!_collectingCalibration) {
-    // During the countdown, keep the countdown
-    // instruction on screen instead of replacing it
-    // with "Position visible".
-    if (_countdownRemaining != null) {
+  void _finishCalibration(PoseReference reference) {
+    if (!mounted || _disposed || !_collectingCalibration) {
       return;
     }
 
-    _status = personVisible
-        ? 'Position visible. Choose a calibration option below.'
-        : 'Move into view so TaskProof can see your position.';
+    // Prevent another camera frame from completing it twice.
+    _collectingCalibration = false;
 
-    return;
+    _calibrationCountdownTimer?.cancel();
+    _calibrationCountdownTimer = null;
+
+    Navigator.pop(context, reference);
   }
 
-  // =========================================================
-  // CALIBRATION IS ACTIVE
-  // =========================================================
+  void _setCurrentPose(PoseReference? snapshot) {
+    final personVisible = snapshot != null;
 
-  if (snapshot == null) {
-    // Calibration should use one continuous period
-    // where the person's pose can be reliably seen.
+    if (_positionDetected.value != personVisible) {
+      _positionDetected.value = personVisible;
+    }
+
+    // =========================================================
+    // NOT CALIBRATING
+    // =========================================================
+
+    if (!_collectingCalibration) {
+      // During the countdown, keep the countdown
+      // instruction on screen instead of replacing it
+      // with "Position visible".
+      if (_countdownRemaining != null) {
+        return;
+      }
+
+      _status = personVisible
+          ? 'Position visible. Choose a calibration option below.'
+          : 'Move into view so TaskProof can see your position.';
+
+      return;
+    }
+
+    // =========================================================
+    // CALIBRATION IS ACTIVE
+    // =========================================================
+
+    if (snapshot == null) {
+      // Calibration should use one continuous period
+      // where the person's pose can be reliably seen.
+      //
+      // If they disappear, throw away the incomplete
+      // samples and automatically begin again once
+      // they are visible.
+      _recentCalibrationSamples.clear();
+
+      _status =
+          'Position lost. Move back into view — calibration will restart automatically.';
+
+      return;
+    }
+
+    _recentCalibrationSamples.add(snapshot);
+
+    // Camera pose analysis is currently approximately
+    // once every 250 ms.
     //
-    // If they disappear, throw away the incomplete
-    // samples and automatically begin again once
-    // they are visible.
-    _recentCalibrationSamples.clear();
+    // 8 samples therefore represents roughly
+    // 2 seconds of natural working position.
+    if (_recentCalibrationSamples.length > 8) {
+      _recentCalibrationSamples.removeAt(0);
+    }
 
+    // Do not create the final reference until
+    // we have the full calibration window.
+    if (_recentCalibrationSamples.length < 8) {
+      return;
+    }
 
-    _status =
-        'Position lost. Move back into view — calibration will restart automatically.';
-
-    return;
-  }
-
-  _recentCalibrationSamples.add(
-    snapshot,
-  );
-
-  // Camera pose analysis is currently approximately
-  // once every 250 ms.
-  //
-  // 8 samples therefore represents roughly
-  // 2 seconds of natural working position.
-  if (_recentCalibrationSamples.length >
-      8) {
-    _recentCalibrationSamples.removeAt(
-      0,
+    final reference = TaskPoseAnalyzer.buildAdaptiveReference(
+      _recentCalibrationSamples,
     );
+
+    if (reference == null) {
+      // The reference was not stable enough yet.
+      // Keep receiving new frames until TaskProof
+      // gets a usable 8-frame window.
+      return;
+    }
+
+    _finishCalibration(reference);
   }
-
-  // Do not create the final reference until
-  // we have the full calibration window.
-  if (_recentCalibrationSamples.length <
-      8) {
-    return;
-  }
-
-  final reference =
-      TaskPoseAnalyzer
-          .buildAdaptiveReference(
-    _recentCalibrationSamples,
-  );
-
-  if (reference == null) {
-    // The reference was not stable enough yet.
-    // Keep receiving new frames until TaskProof
-    // gets a usable 8-frame window.
-    return;
-  }
-
-
-  _finishCalibration(
-    reference,
-  );
-}
-
 
   // ===========================================================
   // BUILD
   // ===========================================================
 
   @override
-Widget build(BuildContext context) {
-  return ValueListenableBuilder<bool>(
-    valueListenable: _positionDetected,
-    builder: (
-      context,
-      positionDetected,
-      child,
-    ) {
-      return Scaffold(
-        backgroundColor:
-            const Color(0xFF07090D),
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _positionDetected,
+      builder: (context, positionDetected, child) {
+        return Scaffold(
+          backgroundColor: const Color(0xFF07090D),
 
-        body: SafeArea(
-          child: Column(
-            children: [
-              // =================================================
-              // HEADER
-              // =================================================
-
-              Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(
-                  8,
-                  5,
-                  16,
-                  4,
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () {
-                        Navigator.pop(
-                          context,
-                        );
-                      },
-                      icon: const Icon(
-                        Icons
-                            .arrow_back_ios_new_rounded,
-                        color: Colors.white,
+          body: SafeArea(
+            child: Column(
+              children: [
+                // =================================================
+                // HEADER
+                // =================================================
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                        },
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
 
-                    const Text(
-                      'Calibrate Position',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 21,
-                        fontWeight:
-                            FontWeight.w800,
+                      const Text(
+                        'Calibrate Position',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          fontFamily: 'Nunito Sans',
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // =================================================
-              // CAMERA
-              // =================================================
-
-              Expanded(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.all(
-                    14,
+                    ],
                   ),
-                  child: ClipRRect(
-                    borderRadius:
-                        BorderRadius.circular(
-                      22,
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        // =========================================
-                        // CAMERA PREVIEW
-                        // =========================================
+                ),
 
-                        _cameraView(),
+                // =================================================
+                // CAMERA
+                // =================================================
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // =========================================
+                          // CAMERA PREVIEW
+                          // =========================================
+                          _cameraView(),
 
-                        // =========================================
-                        // VIEWFINDER BRACKETS
-                        // =========================================
-
-                        IgnorePointer(
-                          child: CustomPaint(
-                            painter:
-                                _ReferenceCameraPainter(
-                              detected:
-                                  positionDetected,
-                            ),
-                          ),
-                        ),
-
-                        // =========================================
-                        // POSITION STATUS
-                        // =========================================
-
-                        Positioned(
-                          top: 16,
-                          left: 16,
-                          child: Container(
-                            padding:
-                                const EdgeInsets
-                                    .symmetric(
-                              horizontal: 16,
-                              vertical: 9,
-                            ),
-                            decoration:
-                                BoxDecoration(
-                              color:
-                                  widget.isDarkMode
-                                      ? const Color(
-                                          0xFF0E1116,
-                                        )
-                                      : const Color(
-                                          0xFFF8F9FA,
-                                        ),
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                18,
-                              ),
-                              border:
-                                  Border.all(
-                                color:
-                                    widget.isDarkMode
-                                        ? const Color(
-                                            0xFF2A2F37,
-                                          )
-                                        : const Color(
-                                            0xFFE0E3E8,
-                                          ),
+                          // =========================================
+                          // VIEWFINDER BRACKETS
+                          // =========================================
+                          IgnorePointer(
+                            child: CustomPaint(
+                              painter: _ReferenceCameraPainter(
+                                detected: positionDetected,
                               ),
                             ),
-                            child: Row(
-                              mainAxisSize:
-                                  MainAxisSize
-                                      .min,
-                              children: [
-                                Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration:
-                                      BoxDecoration(
-                                    color:
-                                        positionDetected
-                                            ? const Color(
-                                                0xFF22C55E,
-                                              )
-                                            : _C.red,
-                                    shape:
-                                        BoxShape
-                                            .circle,
-                                  ),
-                                ),
-
-                                const SizedBox(
-                                  width: 9,
-                                ),
-
-                                Text(
-                                  positionDetected
-                                      ? 'Position Detected'
-                                      : 'Finding Position...',
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        positionDetected
-                                            ? const Color(
-                                                0xFF22C55E,
-                                              )
-                                            : _C.red,
-                                    fontSize: 14,
-                                    fontWeight:
-                                        FontWeight
-                                            .w800,
-                                  ),
-                                ),
-                              ],
-                            ),
                           ),
-                        ),
 
-                        // =========================================
-                        // COUNTDOWN OVERLAY
-                        // =========================================
-
-                        if (_countdownRemaining !=
-                            null)
-                          Center(
+                          // =========================================
+                          // POSITION STATUS
+                          // =========================================
+                          Positioned(
+                            top: 16,
+                            left: 16,
                             child: Container(
-                              width: 116,
-                              height: 116,
-                              alignment:
-                                  Alignment.center,
-                              decoration:
-                                  BoxDecoration(
-                                color: Colors.black
-                                    .withValues(
-                                  alpha: .70,
-                                ),
-                                shape:
-                                    BoxShape.circle,
-                                border:
-                                    Border.all(
-                                  color:
-                                      Colors.white
-                                          .withValues(
-                                    alpha: .20,
-                                  ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 9,
+                              ),
+                              decoration: BoxDecoration(
+                                color: widget.isDarkMode
+                                    ? const Color(0xFF0E1116)
+                                    : const Color(0xFFF8F9FA),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(
+                                  color: widget.isDarkMode
+                                      ? const Color(0xFF2A2F37)
+                                      : const Color(0xFFE0E3E8),
                                 ),
                               ),
-                              child: Text(
-                                '${_countdownRemaining!}',
-                                style:
-                                    const TextStyle(
-                                  color:
-                                      Colors.white,
-                                  fontSize: 58,
-                                  height: 1,
-                                  fontWeight:
-                                      FontWeight
-                                          .w900,
-                                ),
-                              ),
-                            ),
-                          ),
-
-                        // =========================================
-                        // CALIBRATION OVERLAY
-                        // =========================================
-
-                        if (_collectingCalibration)
-                          Center(
-                            child: Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal: 18,
-                                vertical: 10,
-                              ),
-                              decoration:
-                                  BoxDecoration(
-                                color: Colors.black
-                                    .withValues(
-                                  alpha: .70,
-                                ),
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  999,
-                                ),
-                              ),
-                              child:
-                                  const Row(
-                                mainAxisSize:
-                                    MainAxisSize
-                                        .min,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  SizedBox(
-                                    width: 17,
-                                    height: 17,
-                                    child:
-                                        CircularProgressIndicator(
-                                      strokeWidth:
-                                          2,
-                                      color:
-                                          Color(
-                                        0xFF22C55E,
-                                      ),
+                                  Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: BoxDecoration(
+                                      color: positionDetected
+                                          ? const Color(0xFF22C55E)
+                                          : _C.red,
+                                      shape: BoxShape.circle,
                                     ),
                                   ),
 
-                                  SizedBox(
-                                    width: 9,
-                                  ),
+                                  const SizedBox(width: 9),
 
                                   Text(
-                                    'CALIBRATING',
-                                    style:
-                                        TextStyle(
-                                      color:
-                                          Colors.white,
-                                      fontSize:
-                                          13,
-                                      fontWeight:
-                                          FontWeight
-                                              .w800,
-                                      letterSpacing:
-                                          .5,
+                                    positionDetected
+                                        ? 'Position Detected'
+                                        : 'Finding Position...',
+                                    style: TextStyle(
+                                      color: positionDetected
+                                          ? const Color(0xFF22C55E)
+                                          : _C.red,
+                                      fontSize: 14,
+                                      fontFamily: 'Nunito Sans',
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
                           ),
-                      ],
+
+                          // =========================================
+                          // COUNTDOWN OVERLAY
+                          // =========================================
+                          if (_countdownRemaining != null)
+                            Center(
+                              child: Container(
+                                width: 116,
+                                height: 116,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: .70),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: .20),
+                                  ),
+                                ),
+                                child: Text(
+                                  '${_countdownRemaining!}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 58,
+                                    height: 1,
+                                    fontFamily: 'Nunito Sans',
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                          // =========================================
+                          // CALIBRATION OVERLAY
+                          // =========================================
+                          if (_collectingCalibration)
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: .70),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 17,
+                                      height: 17,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF22C55E),
+                                      ),
+                                    ),
+
+                                    SizedBox(width: 9),
+
+                                    Text(
+                                      'CALIBRATING',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontFamily: 'Nunito Sans',
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: .5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
 
-              // =================================================
-              // STATUS + CALIBRATION CONTROLS
-              // =================================================
-
-              Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(
-                  20,
-                  7,
-                  20,
-                  23,
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      _status,
-                      textAlign:
-                          TextAlign.center,
-                      style:
-                          const TextStyle(
-                        color: Color(
-                          0xFFD6D9DE,
-                        ),
-                        fontSize: 14,
-                        height: 1.3,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 14,
-                    ),
-
-                    // =============================================
-                    // WAITING FOR USER
-                    // =============================================
-
-                    if (!_calibrationInProgress) ...[
-                      const Align(
-                        alignment:
-                            Alignment
-                                .centerLeft,
-                        child: Text(
-                          'Calibration Timing',
-                          style:
-                              TextStyle(
-                            color:
-                                Colors.white,
-                            fontSize: 14,
-                            fontWeight:
-                                FontWeight
-                                    .w800,
-                          ),
+                // =================================================
+                // STATUS + CALIBRATION CONTROLS
+                // =================================================
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 7, 20, 23),
+                  child: Column(
+                    children: [
+                      Text(
+                        _status,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFD6D9DE),
+                          fontSize: 14,
+                          height: 1.3,
                         ),
                       ),
 
-                      const SizedBox(
-                        height: 9,
-                      ),
+                      const SizedBox(height: 14),
 
-                      Row(
-                        children: [
-                          // =========================================
-                          // QUICK
-                          // =========================================
-
-                          Expanded(
-                            child:
-                                ChoiceChip(
-                              label:
-                                  const SizedBox(
-                                width: double
-                                    .infinity,
-                                child: Text(
-                                  'Quick · 3 sec',
-                                  textAlign:
-                                      TextAlign
-                                          .center,
-                                ),
-                              ),
-
-                              selected:
-                                  _calibrationMode ==
-                                      _ReferenceCalibrationMode
-                                          .quick,
-
-                              onSelected: (
-                                selected,
-                              ) {
-                                if (!selected) {
-                                  return;
-                                }
-
-                                setState(
-                                  () {
-                                    _calibrationMode =
-                                        _ReferenceCalibrationMode
-                                            .quick;
-                                  },
-                                );
-                              },
-
-                              selectedColor:
-                                  _C.red
-                                      .withValues(
-                                alpha: .22,
-                              ),
-
-                              backgroundColor:
-                                  const Color(
-                                0xFF15191F,
-                              ),
-
-                              side:
-                                  BorderSide(
-                                color:
-                                    _calibrationMode ==
-                                            _ReferenceCalibrationMode
-                                                .quick
-                                        ? _C.red
-                                        : const Color(
-                                            0xFF444A53,
-                                          ),
-                              ),
-
-                              labelStyle:
-                                  TextStyle(
-                                color:
-                                    _calibrationMode ==
-                                            _ReferenceCalibrationMode
-                                                .quick
-                                        ? Colors
-                                            .white
-                                        : const Color(
-                                            0xFFB6BBC4,
-                                          ),
-                                fontWeight:
-                                    FontWeight
-                                        .w700,
-                              ),
+                      // =============================================
+                      // WAITING FOR USER
+                      // =============================================
+                      if (!_calibrationInProgress) ...[
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Calibration Timing',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontFamily: 'Nunito Sans',
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
+                        ),
 
-                          const SizedBox(
-                            width: 9,
-                          ),
+                        const SizedBox(height: 9),
 
-                          // =========================================
-                          // CUSTOM COUNTDOWN
-                          // =========================================
+                        Row(
+                          children: [
+                            // =========================================
+                            // QUICK
+                            // =========================================
+                            Expanded(
+                              child: ChoiceChip(
+                                label: const SizedBox(
+                                  width: double.infinity,
+                                  child: Text(
+                                    'Quick · 3 sec',
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
 
-                          Expanded(
-                            child:
-                                ChoiceChip(
-                              label:
-                                  const SizedBox(
-                                width: double
-                                    .infinity,
-                                child: Text(
-                                  'Countdown',
-                                  textAlign:
-                                      TextAlign
-                                          .center,
+                                selected:
+                                    _calibrationMode ==
+                                    _ReferenceCalibrationMode.quick,
+
+                                onSelected: (selected) {
+                                  if (!selected) {
+                                    return;
+                                  }
+
+                                  setState(() {
+                                    _calibrationMode =
+                                        _ReferenceCalibrationMode.quick;
+                                  });
+                                },
+
+                                selectedColor: _C.red.withValues(alpha: .22),
+
+                                backgroundColor: const Color(0xFF15191F),
+
+                                side: BorderSide(
+                                  color:
+                                      _calibrationMode ==
+                                          _ReferenceCalibrationMode.quick
+                                      ? _C.red
+                                      : const Color(0xFF444A53),
+                                ),
+
+                                labelStyle: TextStyle(
+                                  color:
+                                      _calibrationMode ==
+                                          _ReferenceCalibrationMode.quick
+                                      ? Colors.white
+                                      : const Color(0xFFB6BBC4),
+                                  fontFamily: 'Nunito Sans',
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
+                            ),
 
-                              selected:
-                                  _calibrationMode ==
-                                      _ReferenceCalibrationMode
-                                          .countdown,
+                            const SizedBox(width: 9),
 
-                              onSelected: (
-                                selected,
-                              ) {
-                                if (!selected) {
-                                  return;
-                                }
+                            // =========================================
+                            // CUSTOM COUNTDOWN
+                            // =========================================
+                            Expanded(
+                              child: ChoiceChip(
+                                label: const SizedBox(
+                                  width: double.infinity,
+                                  child: Text(
+                                    'Countdown',
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
 
-                                setState(
-                                  () {
+                                selected:
+                                    _calibrationMode ==
+                                    _ReferenceCalibrationMode.countdown,
+
+                                onSelected: (selected) {
+                                  if (!selected) {
+                                    return;
+                                  }
+
+                                  setState(() {
                                     _calibrationMode =
-                                        _ReferenceCalibrationMode
-                                            .countdown;
-                                  },
-                                );
-                              },
+                                        _ReferenceCalibrationMode.countdown;
+                                  });
+                                },
 
-                              selectedColor:
-                                  _C.red
-                                      .withValues(
-                                alpha: .22,
+                                selectedColor: _C.red.withValues(alpha: .22),
+
+                                backgroundColor: const Color(0xFF15191F),
+
+                                side: BorderSide(
+                                  color:
+                                      _calibrationMode ==
+                                          _ReferenceCalibrationMode.countdown
+                                      ? _C.red
+                                      : const Color(0xFF444A53),
+                                ),
+
+                                labelStyle: TextStyle(
+                                  color:
+                                      _calibrationMode ==
+                                          _ReferenceCalibrationMode.countdown
+                                      ? Colors.white
+                                      : const Color(0xFFB6BBC4),
+                                  fontFamily: 'Nunito Sans',
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
+                            ),
+                          ],
+                        ),
 
-                              backgroundColor:
-                                  const Color(
-                                0xFF15191F,
+                        // =============================================
+                        // CUSTOM DELAY DROPDOWN
+                        // =============================================
+                        if (_calibrationMode ==
+                            _ReferenceCalibrationMode.countdown) ...[
+                          const SizedBox(height: 10),
+
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF15191F),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFF444A53),
                               ),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<int>(
+                                value: _customCountdownSeconds,
 
-                              side:
-                                  BorderSide(
-                                color:
-                                    _calibrationMode ==
-                                            _ReferenceCalibrationMode
-                                                .countdown
-                                        ? _C.red
-                                        : const Color(
-                                            0xFF444A53,
-                                          ),
-                              ),
+                                isExpanded: true,
 
-                              labelStyle:
-                                  TextStyle(
-                                color:
-                                    _calibrationMode ==
-                                            _ReferenceCalibrationMode
-                                                .countdown
-                                        ? Colors
-                                            .white
-                                        : const Color(
-                                            0xFFB6BBC4,
-                                          ),
-                                fontWeight:
-                                    FontWeight
-                                        .w700,
+                                dropdownColor: const Color(0xFF15191F),
+
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                ),
+
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: 5,
+                                    child: Text('5 seconds'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 10,
+                                    child: Text('10 seconds'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 15,
+                                    child: Text('15 seconds'),
+                                  ),
+                                ],
+
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+
+                                  setState(() {
+                                    _customCountdownSeconds = value;
+                                  });
+                                },
                               ),
                             ),
                           ),
                         ],
-                      ),
 
-                      // =============================================
-                      // CUSTOM DELAY DROPDOWN
-                      // =============================================
+                        const SizedBox(height: 14),
 
-                      if (_calibrationMode ==
-                          _ReferenceCalibrationMode
-                              .countdown) ...[
-                        const SizedBox(
-                          height: 10,
+                        // =============================================
+                        // START
+                        // =============================================
+                        SizedBox(
+                          width: double.infinity,
+                          height: 54,
+                          child: ElevatedButton(
+                            onPressed: _initializing || _controller == null
+                                ? null
+                                : _startCalibration,
+
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _C.red,
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: const Color(0xFF444850),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+
+                            child: Text(
+                              _calibrationMode ==
+                                      _ReferenceCalibrationMode.quick
+                                  ? 'Start Quick Calibration'
+                                  : 'Start $_customCountdownSeconds-Second Countdown',
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontFamily: 'Nunito Sans',
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
                         ),
+                      ]
+                      // =============================================
+                      // COUNTDOWN / CALIBRATION CURRENTLY RUNNING
+                      // =============================================
+                      else ...[
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: OutlinedButton(
+                            onPressed: () {
+                              _cancelCalibration();
+                            },
 
-                        Container(
-                          padding:
-                              const EdgeInsets
-                                  .symmetric(
-                            horizontal: 14,
-                          ),
-                          decoration:
-                              BoxDecoration(
-                            color:
-                                const Color(
-                              0xFF15191F,
-                            ),
-                            borderRadius:
-                                BorderRadius
-                                    .circular(
-                              12,
-                            ),
-                            border:
-                                Border.all(
-                              color:
-                                  const Color(
-                                0xFF444A53,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+
+                              side: const BorderSide(color: Color(0xFF555B65)),
+
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
                               ),
                             ),
-                          ),
-                          child:
-                              DropdownButtonHideUnderline(
-                            child:
-                                DropdownButton<
-                                    int>(
-                              value:
-                                  _customCountdownSeconds,
 
-                              isExpanded:
-                                  true,
-
-                              dropdownColor:
-                                  const Color(
-                                0xFF15191F,
-                              ),
-
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                                fontSize: 15,
-                              ),
-
-                              items:
-                                  const [
-                                DropdownMenuItem(
-                                  value: 5,
-                                  child:
-                                      Text(
-                                    '5 seconds',
-                                  ),
-                                ),
-                                DropdownMenuItem(
-                                  value: 10,
-                                  child:
-                                      Text(
-                                    '10 seconds',
-                                  ),
-                                ),
-                                DropdownMenuItem(
-                                  value: 15,
-                                  child:
-                                      Text(
-                                    '15 seconds',
-                                  ),
-                                ),
-                              ],
-
-                              onChanged: (
-                                value,
-                              ) {
-                                if (value ==
-                                    null) {
-                                  return;
-                                }
-
-                                setState(
-                                  () {
-                                    _customCountdownSeconds =
-                                        value;
-                                  },
-                                );
-                              },
+                            child: const Text(
+                              'Cancel Calibration',
+                              style: TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
                         ),
                       ],
-
-                      const SizedBox(
-                        height: 14,
-                      ),
-
-                      // =============================================
-                      // START
-                      // =============================================
-
-                      SizedBox(
-                        width:
-                            double.infinity,
-                        height: 54,
-                        child:
-                            ElevatedButton(
-                          onPressed:
-                              _initializing ||
-                                      _controller ==
-                                          null
-                                  ? null
-                                  : _startCalibration,
-
-                          style:
-                              ElevatedButton
-                                  .styleFrom(
-                            backgroundColor:
-                                _C.red,
-                            foregroundColor:
-                                Colors.white,
-                            disabledBackgroundColor:
-                                const Color(
-                              0xFF444850,
-                            ),
-                            shape:
-                                RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                14,
-                              ),
-                            ),
-                          ),
-
-                          child: Text(
-                            _calibrationMode ==
-                                    _ReferenceCalibrationMode
-                                        .quick
-                                ? 'Start Quick Calibration'
-                                : 'Start $_customCountdownSeconds-Second Countdown',
-                            style:
-                                const TextStyle(
-                              fontSize: 17,
-                              fontWeight:
-                                  FontWeight
-                                      .w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ]
-
-                    // =============================================
-                    // COUNTDOWN / CALIBRATION CURRENTLY RUNNING
-                    // =============================================
-
-                    else ...[
-                      SizedBox(
-                        width:
-                            double.infinity,
-                        height: 48,
-                        child:
-                            OutlinedButton(
-                          onPressed: () {
-                            _cancelCalibration();
-                          },
-
-                          style:
-                              OutlinedButton
-                                  .styleFrom(
-                            foregroundColor:
-                                Colors.white,
-
-                            side:
-                                const BorderSide(
-                              color: Color(
-                                0xFF555B65,
-                              ),
-                            ),
-
-                            shape:
-                                RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                14,
-                              ),
-                            ),
-                          ),
-
-                          child:
-                              const Text(
-                            'Cancel Calibration',
-                            style:
-                                TextStyle(
-                              fontWeight:
-                                  FontWeight
-                                      .w700,
-                            ),
-                          ),
-                        ),
-                      ),
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      );
-    },
-  );
-}
+        );
+      },
+    );
+  }
 
   Widget _cameraView() {
     if (_initializing) {
@@ -5560,18 +5325,13 @@ class _TaskModeButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: selected ? _C.red : Theme.of(context).dividerColor,
-            width: selected ? 1.4 : 1,
+            width: 1,
           ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              imagePath,
-              width: 40,
-              height: 40,
-              fit: BoxFit.contain,
-            ),
+            Image.asset(imagePath, width: 40, height: 40, fit: BoxFit.contain),
 
             const SizedBox(height: 5),
 
@@ -5583,6 +5343,7 @@ class _TaskModeButton extends StatelessWidget {
                     ? _C.red
                     : Theme.of(context).colorScheme.onSurface,
                 fontSize: 13,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -5593,7 +5354,10 @@ class _TaskModeButton extends StatelessWidget {
               subtitle,
               textAlign: TextAlign.center,
               maxLines: 1,
-              style: const TextStyle(fontSize: 10, color: Color(0xFF777A84)),
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF777A84),
+              ),
             ),
           ],
         ),
@@ -5653,6 +5417,7 @@ class _WorkoutTypeButton extends StatelessWidget {
                     ? _C.red
                     : Theme.of(context).colorScheme.onSurface,
                 fontSize: 12,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -5660,7 +5425,10 @@ class _WorkoutTypeButton extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 9, color: Color(0xFF777A84)),
+              style: const TextStyle(
+                fontSize: 9,
+                color: Color(0xFF777A84),
+              ),
             ),
           ],
         ),
@@ -5700,6 +5468,7 @@ class _ModeSettingRow extends StatelessWidget {
                   title,
                   style: const TextStyle(
                     fontSize: 14,
+                    fontFamily: 'Nunito Sans',
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -5736,28 +5505,27 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+      style: const TextStyle(
+        fontSize: 16.5,
+        fontFamily: 'Nunito Sans',
+        fontWeight: FontWeight.w700,
+      ),
     );
   }
 }
 
+// ignore: unused_element
 class _SectionDivider extends StatelessWidget {
   const _SectionDivider();
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 18),
-      child: Divider(height: 1),
-    );
+    return const SizedBox(height: 16);
   }
 }
 
 class _AssetIconBox extends StatelessWidget {
-  const _AssetIconBox({
-    required this.imagePath,
-    required this.dark,
-  });
+  const _AssetIconBox({required this.imagePath, required this.dark});
 
   final String imagePath;
   final bool dark;
@@ -5769,17 +5537,10 @@ class _AssetIconBox extends StatelessWidget {
       height: 50,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: dark
-            ? const Color(0xFF202126)
-            : const Color(0xFFF5F6F8),
+        color: dark ? const Color(0xFF202126) : const Color(0xFFF5F6F8),
         borderRadius: BorderRadius.circular(11),
       ),
-      child: Image.asset(
-        imagePath,
-        width: 39,
-        height: 39,
-        fit: BoxFit.contain,
-      ),
+      child: Image.asset(imagePath, width: 39, height: 39, fit: BoxFit.contain),
     );
   }
 }
@@ -5848,6 +5609,7 @@ class _ScheduleRow extends StatelessWidget {
                     title,
                     style: const TextStyle(
                       fontSize: 15,
+                      fontFamily: 'Nunito Sans',
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -5911,10 +5673,7 @@ class _VerificationRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Row(
           children: [
-            _AssetIconBox(
-              imagePath: imagePath,
-              dark: dark,
-            ),
+            _AssetIconBox(imagePath: imagePath, dark: dark),
 
             const SizedBox(width: 12),
 
@@ -5926,6 +5685,7 @@ class _VerificationRow extends StatelessWidget {
                     title,
                     style: const TextStyle(
                       fontSize: 16,
+                      fontFamily: 'Nunito Sans',
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -5998,29 +5758,22 @@ class _ReferenceRow extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         child: Row(
           children: [
             Container(
-              width: 58,
-              height: 58,
+              width: 44,
+              height: 44,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: dark ? _T.selected : const Color(0xFFF7F7F9),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: complete
-                      ? _C.red
-                      : dark
-                      ? _T.border
-                      : const Color(0xFFD5D7DD),
-                ),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: imagePath != null
                   ? Image.asset(
                       imagePath!,
-                      width: 40,
-                      height: 40,
+                      width: 32,
+                      height: 32,
                       fit: BoxFit.contain,
                     )
                   : Icon(
@@ -6030,7 +5783,7 @@ class _ReferenceRow extends StatelessWidget {
                           : dark
                           ? _T.muted
                           : const Color(0xFF777A84),
-                      size: 27,
+                      size: 24,
                     ),
             ),
 
@@ -6043,25 +5796,27 @@ class _ReferenceRow extends StatelessWidget {
                   Text(
                     title,
                     style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      fontFamily: 'Nunito Sans',
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
 
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
 
                   Text(
                     subtitle,
                     style: TextStyle(
                       color: dark ? _T.muted : const Color(0xFF666A74),
-                      fontSize: 12,
+                      fontSize: 11.5,
+                      height: 1.25,
                     ),
                   ),
                 ],
               ),
             ),
 
-            const Icon(Icons.chevron_right_rounded),
+            const Icon(Icons.chevron_right_rounded, size: 20),
           ],
         ),
       ),
@@ -6085,6 +5840,7 @@ class _ProBadge extends StatelessWidget {
         style: TextStyle(
           color: Colors.white,
           fontSize: 10,
+          fontFamily: 'Nunito Sans',
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -6112,10 +5868,10 @@ class _RepGoalWheel extends StatelessWidget {
     return Column(
       children: [
         SizedBox(
-          height: 112,
+          height: 70,
           child: ListWheelScrollView.useDelegate(
             controller: controller,
-            itemExtent: 36,
+            itemExtent: 30,
             physics: const FixedExtentScrollPhysics(),
             perspective: 0.003,
             diameterRatio: 1.35,
@@ -6132,7 +5888,8 @@ class _RepGoalWheel extends StatelessWidget {
                   child: Text(
                     '$value',
                     style: TextStyle(
-                      fontSize: selected ? 30 : 16,
+                      fontSize: selected ? 27 : 15,
+                      fontFamily: 'Nunito Sans',
                       fontWeight: selected ? FontWeight.w900 : FontWeight.w500,
                       color: selected
                           ? Theme.of(context).colorScheme.onSurface
@@ -6151,6 +5908,7 @@ class _RepGoalWheel extends StatelessWidget {
           'REPS',
           style: TextStyle(
             fontSize: 9,
+            fontFamily: 'Nunito Sans',
             fontWeight: FontWeight.w700,
             color: Color(0xFF777A84),
           ),
@@ -6202,6 +5960,7 @@ class _DurationWheel extends StatelessWidget {
                       index.toString().padLeft(2, '0'),
                       style: TextStyle(
                         fontSize: selected ? 28 : 15,
+                        fontFamily: 'Nunito Sans',
                         fontWeight: selected
                             ? FontWeight.w800
                             : FontWeight.w500,
@@ -6220,7 +5979,10 @@ class _DurationWheel extends StatelessWidget {
 
           Text(
             label,
-            style: const TextStyle(fontSize: 9, color: Color(0xFF777A84)),
+            style: const TextStyle(
+              fontSize: 9,
+              color: Color(0xFF777A84),
+            ),
           ),
         ],
       ),

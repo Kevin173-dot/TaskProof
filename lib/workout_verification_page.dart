@@ -8,7 +8,6 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'new_task_page.dart';
 import 'workout_pose_analyzer.dart';
 
-
 enum WorkoutSessionState {
   preparing,
   countdown,
@@ -40,20 +39,15 @@ class _WorkoutVerificationPageState extends State<WorkoutVerificationPage>
     with WidgetsBindingObserver {
   static const _red = Color(0xFFFF101C);
   static const _green = Color(0xFF22C55E);
-static const _analysisInterval = Duration.zero;
+  static const _analysisInterval = Duration(milliseconds: 80);
   static const _personLossGrace = Duration(milliseconds: 1000);
   static const _exerciseLossGrace = Duration(milliseconds: 1100);
-  static const _initialReadyDuration =
-      Duration(milliseconds: 400);
-  static const _pushUpReadyDuration =
-      Duration(milliseconds: 850);
-  static const _pushUpCountdownGrace =
-      Duration(milliseconds: 900);
+  static const _initialReadyDuration = Duration(milliseconds: 400);
+  static const _pushUpReadyDuration = Duration(milliseconds: 850);
+  static const _pushUpCountdownGrace = Duration(milliseconds: 900);
 
-  static const _pushUpReadinessLossGrace =
-      Duration(milliseconds: 650);
-  static const _jumpingJackReadinessGrace =
-      Duration(milliseconds: 950);
+  static const _pushUpReadinessLossGrace = Duration(milliseconds: 650);
+  static const _jumpingJackReadinessGrace = Duration(milliseconds: 950);
   static const bool _showWorkoutDebug = false;
 
   late final WorkoutTaskConfig _config;
@@ -87,6 +81,7 @@ static const _analysisInterval = Duration.zero;
   String _status = 'Step back so TaskProof can see you';
   String? _cameraError;
   String _renderSignature = '';
+  int _poseRenderTick = 0;
   String? _formCandidate;
   String? _formFeedback;
 
@@ -122,7 +117,7 @@ static const _analysisInterval = Duration.zero;
       throw StateError('Workout task is missing WorkoutTaskConfig.');
     }
     _config = config;
-      unawaited(_applySavedOrientation());
+    unawaited(_applySavedOrientation());
     _analyzer = WorkoutPoseAnalyzer(
       exercise: config.exercise,
       movementType: config.movementType,
@@ -137,18 +132,17 @@ static const _analysisInterval = Duration.zero;
   }
 
   Future<void> _applySavedOrientation() async {
-  if (_config.cameraOrientation ==
-      WorkoutCameraOrientation.landscape) {
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-  } else {
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+    if (_config.cameraOrientation == WorkoutCameraOrientation.landscape) {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    }
   }
-}
 
   @override
   void dispose() {
@@ -160,11 +154,9 @@ static const _analysisInterval = Duration.zero;
     super.dispose();
   }
 
-Future<void> _restorePortraitOrientation() async {
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
-}
+  Future<void> _restorePortraitOrientation() async {
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -194,19 +186,18 @@ Future<void> _restorePortraitOrientation() async {
       _refresh();
       return;
     }
-  _poseDetector = PoseDetector(
-    options: PoseDetectorOptions(
-      // Push-ups use the higher-precision landmark model.
-      // Other workouts keep the existing base model.
-      model:
-          _config.exercise == WorkoutExercise.pushUps
-          ? PoseDetectionModel.accurate
-          : PoseDetectionModel.base,
-      mode: PoseDetectionMode.stream,
-    ),
-  );
+    _poseDetector = PoseDetector(
+      options: PoseDetectorOptions(
+        // Push-ups use the higher-precision landmark model.
+        // Other workouts keep the existing base model.
+        model: _config.exercise == WorkoutExercise.pushUps
+            ? PoseDetectionModel.accurate
+            : PoseDetectionModel.base,
+        mode: PoseDetectionMode.stream,
+      ),
+    );
 
-  await _startCamera();
+    await _startCamera();
   }
 
   Future<bool> _startCamera() {
@@ -245,7 +236,7 @@ Future<void> _restorePortraitOrientation() async {
       );
       local = CameraController(
         camera,
-        ResolutionPreset.high,
+        ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: MlKitCameraImageConverter.cameraFormat,
       );
@@ -428,6 +419,7 @@ Future<void> _restorePortraitOrientation() async {
 
   void _applyObservation(WorkoutPoseObservation observation, DateTime now) {
     _observation = observation;
+    _poseRenderTick++;
 
     if (observation.personPresent) {
       _lastPersonSeen = now;
@@ -468,52 +460,43 @@ Future<void> _restorePortraitOrientation() async {
         return;
       }
 
-_status = workoutCameraGuidance(
-  _config.exercise,
-  observation,
-);
+      _status = workoutCameraGuidance(_config.exercise, observation);
 
-final isPushUp =
-    _config.exercise == WorkoutExercise.pushUps;
+      final isPushUp = _config.exercise == WorkoutExercise.pushUps;
 
-if (observation.cameraReady) {
-  if (isPushUp) {
-    _lastPushUpReadyAt = now;
-  }
+      if (observation.cameraReady) {
+        if (isPushUp) {
+          _lastPushUpReadyAt = now;
+        }
 
-  _readySince ??= now;
+        _readySince ??= now;
 
-  final readyDuration = _resumeWarmup
-      ? const Duration(milliseconds: 400)
-      : isPushUp
-          ? _pushUpReadyDuration
-          : _initialReadyDuration;
+        final readyDuration = _resumeWarmup
+            ? const Duration(milliseconds: 400)
+            : isPushUp
+            ? _pushUpReadyDuration
+            : _initialReadyDuration;
 
-  if (now.difference(_readySince!) >= readyDuration) {
-    _beginCountdown(
-      resume: _resumeWarmup,
-    );
-  }
-} else {
-  final recentlyReady =
-      isPushUp &&
-      _lastPushUpReadyAt != null &&
-      now.difference(_lastPushUpReadyAt!) <=
-          _pushUpReadinessLossGrace;
+        if (now.difference(_readySince!) >= readyDuration) {
+          _beginCountdown(resume: _resumeWarmup);
+        }
+      } else {
+        final recentlyReady =
+            isPushUp &&
+            _lastPushUpReadyAt != null &&
+            now.difference(_lastPushUpReadyAt!) <= _pushUpReadinessLossGrace;
 
-  if (!recentlyReady) {
-    _readySince = null;
-  }
-}
+        if (!recentlyReady) {
+          _readySince = null;
+        }
+      }
       _refresh();
       return;
     }
 
     if (_state == WorkoutSessionState.countdown) {
-      if (_config.exercise ==
-          WorkoutExercise.pushUps) {
-        final debug =
-            observation.pushUpDebug;
+      if (_config.exercise == WorkoutExercise.pushUps) {
+        final debug = observation.pushUpDebug;
 
         final coreSignalsHealthy =
             observation.personPresent &&
@@ -525,9 +508,7 @@ if (observation.cameraReady) {
         } else {
           _pushUpCountdownUnreadySince ??= now;
 
-          if (now.difference(
-                _pushUpCountdownUnreadySince!,
-              ) >=
+          if (now.difference(_pushUpCountdownUnreadySince!) >=
               _pushUpCountdownGrace) {
             _cancelCountdown();
           }
@@ -537,19 +518,15 @@ if (observation.cameraReady) {
         return;
       }
 
-      final signalsSeen =
-          _lastJumpingJackSignalsSeen;
+      final signalsSeen = _lastJumpingJackSignalsSeen;
 
       final jumpingJackSignalsRecentlyAvailable =
-          _config.exercise ==
-                  WorkoutExercise.jumpingJacks &&
-              _jumpingJackBaselineLatched &&
-              signalsSeen != null &&
-              now.difference(signalsSeen) <=
-                  _jumpingJackReadinessGrace;
+          _config.exercise == WorkoutExercise.jumpingJacks &&
+          _jumpingJackBaselineLatched &&
+          signalsSeen != null &&
+          now.difference(signalsSeen) <= _jumpingJackReadinessGrace;
 
-      if (!observation.cameraReady &&
-          !jumpingJackSignalsRecentlyAvailable) {
+      if (!observation.cameraReady && !jumpingJackSignalsRecentlyAvailable) {
         _cancelCountdown();
       }
 
@@ -667,18 +644,14 @@ if (observation.cameraReady) {
     _countdownStarted = null;
     _pushUpCountdownUnreadySince = null;
     _readySince = null;
-    _status =
-        workoutCameraGuidance(
-          _config.exercise,
-          _observation,
-        );
+    _status = workoutCameraGuidance(_config.exercise, _observation);
   }
 
   void _startExercise(DateTime now) {
     // Clear any in-progress cycle while retaining the closed Jumping Jack
     // stance learned during preparation/countdown.
     _analyzer.resetRepPhase();
-   _state = WorkoutSessionState.exercising;
+    _state = WorkoutSessionState.exercising;
     _warning = null;
     _countdownStarted = null;
     _pushUpCountdownUnreadySince = null;
@@ -834,7 +807,7 @@ if (observation.cameraReady) {
   Future<void> _resumeVerification() async {
     if (_closing || _lifecyclePaused || _userPaused) return;
     _resumeWarmup = true;
-     _state = WorkoutSessionState.preparing;
+    _state = WorkoutSessionState.preparing;
     _status = 'Restarting camera';
     _readySince = null;
     _pushUpCountdownUnreadySince = null;
@@ -910,7 +883,7 @@ if (observation.cameraReady) {
         '${debug?.armsOpen}|${debug?.armsClosed}|'
         '${debug?.kneesOpen}|${debug?.kneesClosed}|'
         '${debug?.kneeSpreadRatio}|${debug?.phase.name}|'
-        '${_observation?.overlayLandmarks}';
+        '$_poseRenderTick';
     if (signature == _renderSignature) return;
     _renderSignature = signature;
     setState(() {});
@@ -993,6 +966,7 @@ if (observation.cameraReady) {
                       style: TextStyle(
                         color: foreground,
                         fontSize: 21,
+                        fontFamily: 'Nunito Sans',
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -1001,6 +975,7 @@ if (observation.cameraReady) {
                       workoutExerciseLabel(_config.exercise),
                       style: const TextStyle(
                         color: Color(0xFF777A84),
+                        fontFamily: 'Nunito Sans',
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1022,6 +997,9 @@ if (observation.cameraReady) {
                               landmarks:
                                   _observation?.overlayLandmarks ?? const {},
                               color: _trackerColor,
+                              mirrorHorizontally:
+                                  _camera?.lensDirection ==
+                                  CameraLensDirection.front,
                             ),
                           ),
                         ),
@@ -1050,6 +1028,7 @@ if (observation.cameraReady) {
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 92,
+                                fontFamily: 'Nunito Sans',
                                 fontWeight: FontWeight.w900,
                                 shadows: [
                                   Shadow(blurRadius: 18, color: Colors.black),
@@ -1066,6 +1045,7 @@ if (observation.cameraReady) {
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 28,
+                                  fontFamily: 'Nunito Sans',
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
@@ -1086,6 +1066,7 @@ if (observation.cameraReady) {
                         color: foreground,
                         fontSize: 34,
                         height: 1,
+                        fontFamily: 'Nunito Sans',
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -1095,6 +1076,7 @@ if (observation.cameraReady) {
                       style: const TextStyle(
                         color: Color(0xFF777A84),
                         fontSize: 11,
+                        fontFamily: 'Nunito Sans',
                         fontWeight: FontWeight.w900,
                         letterSpacing: 1.3,
                       ),
@@ -1111,6 +1093,7 @@ if (observation.cameraReady) {
                           color: _warning == _WorkoutWarning.restLimit
                               ? _red
                               : foreground,
+                          fontFamily: 'Nunito Sans',
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -1214,6 +1197,7 @@ if (observation.cameraReady) {
         style: TextStyle(
           color: _accentColor,
           fontSize: 12,
+          fontFamily: 'Nunito Sans',
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -1288,15 +1272,22 @@ class _WorkoutCameraView extends StatelessWidget {
 }
 
 class _WorkoutSkeletonPainter extends CustomPainter {
-  const _WorkoutSkeletonPainter({required this.landmarks, required this.color});
+  const _WorkoutSkeletonPainter({
+    required this.landmarks,
+    required this.color,
+    required this.mirrorHorizontally,
+  });
 
   final Map<PoseLandmarkType, Offset> landmarks;
   final Color color;
+  final bool mirrorHorizontally;
 
   Offset? _point(PoseLandmarkType type, Size size) {
     final point = landmarks[type];
     if (point == null) return null;
-    return Offset(point.dx * size.width, point.dy * size.height);
+
+    final x = mirrorHorizontally ? 1.0 - point.dx : point.dx;
+    return Offset(x * size.width, point.dy * size.height);
   }
 
   void _drawConnection(
@@ -1370,7 +1361,9 @@ class _WorkoutSkeletonPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _WorkoutSkeletonPainter oldDelegate) {
-    return oldDelegate.landmarks != landmarks || oldDelegate.color != color;
+    return oldDelegate.landmarks != landmarks ||
+        oldDelegate.color != color ||
+        oldDelegate.mirrorHorizontally != mirrorHorizontally;
   }
 }
 

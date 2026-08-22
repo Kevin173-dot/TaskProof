@@ -668,6 +668,7 @@ class _ActiveCameraPreviewPageState extends State<ActiveCameraPreviewPage>
                         style: TextStyle(
                           color: foreground,
                           fontSize: 21,
+                          fontFamily: 'Nunito Sans',
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -724,6 +725,7 @@ class _ActiveCameraPreviewPageState extends State<ActiveCameraPreviewPage>
                           style: TextStyle(
                             color: foreground,
                             fontSize: 14,
+                            fontFamily: 'Nunito Sans',
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -756,6 +758,7 @@ class _ActiveCameraPreviewPageState extends State<ActiveCameraPreviewPage>
                           'Done',
                           style: TextStyle(
                             fontSize: 16,
+                            fontFamily: 'Nunito Sans',
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -1009,6 +1012,7 @@ class _PersonBadge extends StatelessWidget {
               style: TextStyle(
                 color: color,
                 fontSize: 13,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -1043,6 +1047,7 @@ class _PlacementOverlay extends StatelessWidget {
               style: TextStyle(
                 color: feedback.accentColor,
                 fontSize: 16,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w800,
               ),
             ),

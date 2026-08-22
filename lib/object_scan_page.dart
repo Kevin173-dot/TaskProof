@@ -19,22 +19,14 @@ class _ScanCropRequest {
   final List<List<double>> bounds;
 }
 
-Uint8List? _cropScanToPrimaryObject(
-  _ScanCropRequest request,
-) {
-  final decoded =
-      img.decodeImage(
-    request.bytes,
-  );
+Uint8List? _cropScanToPrimaryObject(_ScanCropRequest request) {
+  final decoded = img.decodeImage(request.bytes);
 
   if (decoded == null) {
     return null;
   }
 
-  final image =
-      img.bakeOrientation(
-    decoded,
-  );
+  final image = img.bakeOrientation(decoded);
 
   // ===========================================================
   // FALLBACK — CENTER CROP
@@ -50,28 +42,15 @@ Uint8List? _cropScanToPrimaryObject(
   // ===========================================================
 
   if (request.bounds.isEmpty) {
-    final shortest =
-        math.min(
-      image.width,
-      image.height,
-    );
+    final shortest = math.min(image.width, image.height);
 
-    final cropSize =
-        math.max(
-      32,
-      (shortest * 0.62).round(),
-    );
+    final cropSize = math.max(32, (shortest * 0.62).round());
 
-    final left =
-        (image.width - cropSize) ~/
-        2;
+    final left = (image.width - cropSize) ~/ 2;
 
-    final top =
-        (image.height - cropSize) ~/
-        2;
+    final top = (image.height - cropSize) ~/ 2;
 
-    final cropped =
-        img.copyCrop(
+    final cropped = img.copyCrop(
       image,
       x: left,
       y: top,
@@ -79,122 +58,61 @@ Uint8List? _cropScanToPrimaryObject(
       height: cropSize,
     );
 
-    return Uint8List.fromList(
-      img.encodeJpg(
-        cropped,
-        quality: 92,
-      ),
-    );
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
   }
 
   // ===========================================================
   // ML KIT OBJECT BOX
   // ===========================================================
 
-  final centerX =
-      image.width / 2;
+  final centerX = image.width / 2;
 
-  final centerY =
-      image.height / 2;
+  final centerY = image.height / 2;
 
   List<double>? best;
 
-  var bestScore =
-      double.negativeInfinity;
+  var bestScore = double.negativeInfinity;
 
-  for (final values
-      in request.bounds) {
+  for (final values in request.bounds) {
     if (values.length != 4) {
       continue;
     }
 
-    final left =
-        values[0].clamp(
-      0.0,
-      image.width.toDouble(),
-    );
+    final left = values[0].clamp(0.0, image.width.toDouble());
 
-    final top =
-        values[1].clamp(
-      0.0,
-      image.height.toDouble(),
-    );
+    final top = values[1].clamp(0.0, image.height.toDouble());
 
-    final right =
-        values[2].clamp(
-      0.0,
-      image.width.toDouble(),
-    );
+    final right = values[2].clamp(0.0, image.width.toDouble());
 
-    final bottom =
-        values[3].clamp(
-      0.0,
-      image.height.toDouble(),
-    );
+    final bottom = values[3].clamp(0.0, image.height.toDouble());
 
-    final width =
-        right - left;
+    final width = right - left;
 
-    final height =
-        bottom - top;
+    final height = bottom - top;
 
-    final areaFraction =
-        width *
-        height /
-        (image.width *
-            image.height);
+    final areaFraction = width * height / (image.width * image.height);
 
-    if (width < 12 ||
-        height < 12 ||
-        areaFraction < 0.008) {
+    if (width < 12 || height < 12 || areaFraction < 0.008) {
       continue;
     }
 
-    final objectCenterX =
-        (left + right) / 2;
+    final objectCenterX = (left + right) / 2;
 
-    final objectCenterY =
-        (top + bottom) / 2;
+    final objectCenterY = (top + bottom) / 2;
 
-    final normalizedDistance =
-        math.sqrt(
-      math.pow(
-            (objectCenterX -
-                    centerX) /
-                image.width,
-            2,
-          ) +
-          math.pow(
-            (objectCenterY -
-                    centerY) /
-                image.height,
-            2,
-          ),
+    final normalizedDistance = math.sqrt(
+      math.pow((objectCenterX - centerX) / image.width, 2) +
+          math.pow((objectCenterY - centerY) / image.height, 2),
     );
 
     final score =
-        (1 - normalizedDistance)
-                .clamp(
-                  0.0,
-                  1.0,
-                ) *
-            2.2 +
-        math.sqrt(
-          areaFraction.clamp(
-            0.0,
-            1.0,
-          ),
-        );
+        (1 - normalizedDistance).clamp(0.0, 1.0) * 2.2 +
+        math.sqrt(areaFraction.clamp(0.0, 1.0));
 
     if (score > bestScore) {
       bestScore = score;
 
-      best = [
-        left,
-        top,
-        right,
-        bottom,
-      ];
+      best = [left, top, right, bottom];
     }
   }
 
@@ -202,28 +120,15 @@ Uint8List? _cropScanToPrimaryObject(
   // usable. Fall back to the centered scan region rather
   // than storing the entire photograph.
   if (best == null) {
-    final shortest =
-        math.min(
-      image.width,
-      image.height,
-    );
+    final shortest = math.min(image.width, image.height);
 
-    final cropSize =
-        math.max(
-      32,
-      (shortest * 0.62).round(),
-    );
+    final cropSize = math.max(32, (shortest * 0.62).round());
 
-    final left =
-        (image.width - cropSize) ~/
-        2;
+    final left = (image.width - cropSize) ~/ 2;
 
-    final top =
-        (image.height - cropSize) ~/
-        2;
+    final top = (image.height - cropSize) ~/ 2;
 
-    final cropped =
-        img.copyCrop(
+    final cropped = img.copyCrop(
       image,
       x: left,
       y: top,
@@ -231,60 +136,26 @@ Uint8List? _cropScanToPrimaryObject(
       height: cropSize,
     );
 
-    return Uint8List.fromList(
-      img.encodeJpg(
-        cropped,
-        quality: 92,
-      ),
-    );
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
   }
 
-  final objectWidth =
-      best[2] - best[0];
+  final objectWidth = best[2] - best[0];
 
-  final objectHeight =
-      best[3] - best[1];
+  final objectHeight = best[3] - best[1];
 
-  final paddingX =
-      objectWidth * 0.14;
+  final paddingX = objectWidth * 0.14;
 
-  final paddingY =
-      objectHeight * 0.14;
+  final paddingY = objectHeight * 0.14;
 
-  final left =
-      (best[0] - paddingX)
-          .floor()
-          .clamp(
-            0,
-            image.width - 1,
-          );
+  final left = (best[0] - paddingX).floor().clamp(0, image.width - 1);
 
-  final top =
-      (best[1] - paddingY)
-          .floor()
-          .clamp(
-            0,
-            image.height - 1,
-          );
+  final top = (best[1] - paddingY).floor().clamp(0, image.height - 1);
 
-  final right =
-      (best[2] + paddingX)
-          .ceil()
-          .clamp(
-            left + 1,
-            image.width,
-          );
+  final right = (best[2] + paddingX).ceil().clamp(left + 1, image.width);
 
-  final bottom =
-      (best[3] + paddingY)
-          .ceil()
-          .clamp(
-            top + 1,
-            image.height,
-          );
+  final bottom = (best[3] + paddingY).ceil().clamp(top + 1, image.height);
 
-  final cropped =
-      img.copyCrop(
+  final cropped = img.copyCrop(
     image,
     x: left,
     y: top,
@@ -292,12 +163,7 @@ Uint8List? _cropScanToPrimaryObject(
     height: bottom - top,
   );
 
-  return Uint8List.fromList(
-    img.encodeJpg(
-      cropped,
-      quality: 92,
-    ),
-  );
+  return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
 }
 
 int? _createObjectScanHash(Uint8List bytes) {
@@ -483,6 +349,7 @@ class _ObjectScanLibraryPageState extends State<ObjectScanLibraryPage> {
               'Done',
               style: TextStyle(
                 color: _taskProofRed,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -581,6 +448,7 @@ class _ObjectScanLibraryPageState extends State<ObjectScanLibraryPage> {
                                             style: TextStyle(
                                               color: text,
                                               fontSize: 16,
+                                              fontFamily: 'Nunito Sans',
                                               fontWeight: FontWeight.w800,
                                             ),
                                           ),
@@ -954,57 +822,40 @@ class _ContinuousObjectScanPageState extends State<ContinuousObjectScanPage>
         return;
       }
 
-      List<List<double>> detectedBounds =
-          const [];
+      List<List<double>> detectedBounds = const [];
 
       try {
-        final objects =
-            await _objectLocator.processImage(
-          InputImage.fromFilePath(
-            picture.path,
-          ),
+        final objects = await _objectLocator.processImage(
+          InputImage.fromFilePath(picture.path),
         );
 
-        detectedBounds =
-            objects
-                .map(
-                  (object) =>
-                      <double>[
-                    object.boundingBox.left,
-                    object.boundingBox.top,
-                    object.boundingBox.right,
-                    object.boundingBox.bottom,
-                  ],
-                )
-                .toList(
-                  growable: false,
-                );
+        detectedBounds = objects
+            .map(
+              (object) => <double>[
+                object.boundingBox.left,
+                object.boundingBox.top,
+                object.boundingBox.right,
+                object.boundingBox.bottom,
+              ],
+            )
+            .toList(growable: false);
       } catch (error) {
-        debugPrint(
-          'Object scan localization fallback: $error',
-        );
+        debugPrint('Object scan localization fallback: $error');
       }
 
       // Always create an object-focused profile.
       //
       // When detectedBounds is empty, _cropScanToPrimaryObject()
       // performs the centered fallback crop.
-      final localized =
-          await compute(
+      final localized = await compute(
         _cropScanToPrimaryObject,
-        _ScanCropRequest(
-          bytes: bytes,
-          bounds: detectedBounds,
-        ),
-        debugLabel:
-            'TaskProof scan object crop',
+        _ScanCropRequest(bytes: bytes, bounds: detectedBounds),
+        debugLabel: 'TaskProof scan object crop',
       );
 
-      final profileBytes =
-          localized != null &&
-                  localized.isNotEmpty
-              ? localized
-              : bytes;
+      final profileBytes = localized != null && localized.isNotEmpty
+          ? localized
+          : bytes;
 
       if (!_scanning || _finishing || !mounted) {
         return;
@@ -1377,6 +1228,7 @@ class _ContinuousObjectScanPageState extends State<ContinuousObjectScanPage>
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 20,
+                          fontFamily: 'Nunito Sans',
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -1443,6 +1295,7 @@ class _ContinuousObjectScanPageState extends State<ContinuousObjectScanPage>
                           '${_samplePaths.length}/$_targetViews',
                           style: const TextStyle(
                             color: Colors.white,
+                            fontFamily: 'Nunito Sans',
                             fontWeight: FontWeight.w800,
                           ),
                         ),

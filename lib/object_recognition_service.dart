@@ -877,13 +877,7 @@ List<_RawObjectScore> _matchRawCameraFrame(
       localizationAvailable: false,
     );
 
-    return _scoreProfiles(
-      profiles,
-      _describeRegions(
-        raster,
-        regions,
-      ),
-    );
+    return _scoreProfiles(profiles, _describeRegions(raster, regions));
   }
 
   // Try the native detector's tight boxes first. In the usual case where all

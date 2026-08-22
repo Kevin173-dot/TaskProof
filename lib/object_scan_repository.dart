@@ -146,11 +146,7 @@ class ObjectScanRepository {
     required int index,
     required Uint8List bytes,
   }) {
-    return _files.saveSample(
-      scanId: scanId,
-      index: index,
-      bytes: bytes,
-    );
+    return _files.saveSample(scanId: scanId, index: index, bytes: bytes);
   }
 
   Future<Uint8List?> readImage(String path) {

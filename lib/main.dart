@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'firebase_options.dart';
 import 'main_page.dart';
@@ -43,8 +44,9 @@ class TaskProofApp extends StatelessWidget {
       title: 'TaskProof',
       theme: ThemeData(
         useMaterial3: true,
+        fontFamily: GoogleFonts.sourceSans3().fontFamily,
+        textTheme: _boldNunitoTextTheme(),
         scaffoldBackgroundColor: Colors.white,
-        fontFamily: 'Arial',
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppColors.taskRed,
           brightness: Brightness.light,
@@ -53,6 +55,32 @@ class TaskProofApp extends StatelessWidget {
       home: const AuthGate(),
     );
   }
+}
+
+TextTheme _boldNunitoTextTheme() {
+  final source = GoogleFonts.sourceSans3TextTheme();
+  TextStyle bold(TextStyle? style) {
+    final resolved = style ?? const TextStyle();
+    final weight = resolved.fontWeight?.value ?? FontWeight.normal.value;
+    return weight >= FontWeight.w600.value
+        ? resolved.copyWith(fontFamily: 'Nunito Sans')
+        : resolved;
+  }
+
+  return source.copyWith(
+    displayLarge: bold(source.displayLarge),
+    displayMedium: bold(source.displayMedium),
+    displaySmall: bold(source.displaySmall),
+    headlineLarge: bold(source.headlineLarge),
+    headlineMedium: bold(source.headlineMedium),
+    headlineSmall: bold(source.headlineSmall),
+    titleLarge: bold(source.titleLarge),
+    titleMedium: bold(source.titleMedium),
+    titleSmall: bold(source.titleSmall),
+    labelLarge: bold(source.labelLarge),
+    labelMedium: bold(source.labelMedium),
+    labelSmall: bold(source.labelSmall),
+  );
 }
 
 class AppColors {
@@ -388,6 +416,7 @@ class _LoginPageState extends State<LoginPage> {
                           style: TextStyle(
                             color: AppColors.darkText,
                             fontSize: isVerySmallPhone ? 24 : 28,
+                            fontFamily: 'Nunito Sans',
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -397,6 +426,7 @@ class _LoginPageState extends State<LoginPage> {
                           style: TextStyle(
                             color: AppColors.secondaryText,
                             fontSize: isVerySmallPhone ? 14.5 : 16,
+                            fontFamily: 'Nunito Sans',
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -775,6 +805,7 @@ class _TaskProofHeader extends StatelessWidget {
                 text: 'TASK',
                 style: TextStyle(
                   color: AppColors.darkText,
+                  fontFamily: 'Nunito Sans',
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -782,6 +813,7 @@ class _TaskProofHeader extends StatelessWidget {
                 text: 'PROOF',
                 style: TextStyle(
                   color: AppColors.taskRed,
+                  fontFamily: 'Nunito Sans',
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -795,6 +827,7 @@ class _TaskProofHeader extends StatelessWidget {
           style: TextStyle(
             color: AppColors.secondaryText,
             fontSize: compact ? 13.5 : 15,
+            fontFamily: 'Nunito Sans',
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -844,6 +877,7 @@ class TaskProofInput extends StatelessWidget {
       style: TextStyle(
         color: AppColors.darkText,
         fontSize: compact ? 15.5 : 17,
+        fontFamily: 'Nunito Sans',
         fontWeight: FontWeight.w500,
       ),
       decoration: InputDecoration(
@@ -934,6 +968,7 @@ class PrimaryButton extends StatelessWidget {
                   label,
                   style: const TextStyle(
                     fontSize: 19,
+                    fontFamily: 'Nunito Sans',
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -989,6 +1024,7 @@ class SocialLoginButton extends StatelessWidget {
               label,
               style: TextStyle(
                 fontSize: compact ? 15.5 : 17,
+                fontFamily: 'Nunito Sans',
                 fontWeight: FontWeight.w600,
               ),
             ),
