@@ -1,8 +1,6 @@
 import 'dart:async';
 
 import 'package:camera/camera.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/services.dart';
@@ -34,8 +32,6 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> {
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-
   final List<TaskData> tasks = [];
 
   late final PageController _taskPageController;
@@ -228,9 +224,7 @@ class _MainPageState extends State<MainPage> {
                     ),
                   ),
             child: Scaffold(
-              key: _scaffoldKey,
               backgroundColor: pageBackground,
-              drawer: _AppDrawer(),
               body: SafeArea(
                 bottom: false,
                 child: Column(
@@ -255,128 +249,116 @@ class _MainPageState extends State<MainPage> {
   // HEADER
   // ===========================================================
 
-  Widget _buildHeader() {
-    final textColor = isDarkMode ? const Color(0xFFF4F6F8) : _C.dark;
+Widget _buildHeader() {
+  final textColor = isDarkMode ? const Color(0xFFF4F6F8) : _C.dark;
 
-    final completedToday = verifiedToday;
+  final completedToday = verifiedToday;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              IconButton(
-                onPressed: () {
-                  setState(() {
-                    showCreateMenu = false;
-                  });
-
-                  _scaffoldKey.currentState?.openDrawer();
-                },
-                icon: Icon(Icons.menu_rounded, color: textColor, size: 36),
-              ),
-
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: isDarkMode ? 'Light mode' : 'Dark mode',
-                    onPressed: () {
-                      setState(() {
-                        isDarkMode = !isDarkMode;
-
-                        showCreateMenu = false;
-                      });
-                    },
-                    icon: Icon(
-                      isDarkMode
-                          ? Icons.light_mode_outlined
-                          : Icons.dark_mode_outlined,
-                      color: textColor,
-                      size: 30,
-                    ),
-                  ),
-
-                  Stack(
-                    children: [
-                      IconButton(
-                        onPressed: _showNotifications,
-                        icon: Icon(
-                          Icons.notifications_none_rounded,
-                          color: textColor,
-                          size: 35,
-                        ),
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // =====================================================
+            // LEFT SIDE
+            // Slightly LOWER than the bell
+            // =====================================================
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'My Tasks',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 28,
+                        height: 1,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -.7,
                       ),
+                    ),
 
-                      Positioned(
-                        right: 8,
-                        top: 5,
-                        child: Container(
-                          width: 9,
-                          height: 9,
-                          decoration: BoxDecoration(
-                            color: _C.red,
-                            shape: BoxShape.circle,
+                    const SizedBox(height: 10),
+
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.verified_outlined,
+                          color: isDarkMode
+                              ? const Color(0xFF9DA8B8)
+                              : const Color(0xFF777B9F),
+                          size: 19,
+                        ),
+
+                        const SizedBox(width: 7),
+
+                        Text(
+                          '$completedToday ${completedToday == 1 ? 'task' : 'tasks'} verified today',
+                          style: TextStyle(
+                            color: isDarkMode
+                                ? const Color(0xFF9DA8B8)
+                                : const Color(0xFF666A95),
+                            fontSize: 14,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          Text(
-            'My Tasks',
-            style: TextStyle(
-              color: textColor,
-              fontSize: 28,
-              height: 1,
-              fontFamily: 'Nunito Sans',
-              fontWeight: FontWeight.w900,
-              letterSpacing: -.7,
-            ),
-          ),
-
-          const SizedBox(height: 15),
-
-          Row(
-            children: [
-              Icon(
-                Icons.verified_outlined,
-                color: isDarkMode
-                    ? const Color(0xFF9DA8B8)
-                    : const Color(0xFF777B9F),
-                size: 21,
-              ),
-
-              const SizedBox(width: 8),
-
-              Text(
-                '$completedToday ${completedToday == 1 ? 'task' : 'tasks'} verified today',
-                style: TextStyle(
-                  color: isDarkMode
-                      ? const Color(0xFF9DA8B8)
-                      : const Color(0xFF666A95),
-                  fontSize: 14,
+                      ],
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
 
-          const SizedBox(height: 24),
+            // =====================================================
+            // BELL
+            // Remains at the TOP of the header
+            // =====================================================
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 44,
+                    minHeight: 44,
+                  ),
+                  onPressed: _showNotifications,
+                  icon: Icon(
+                    Icons.notifications_none_rounded,
+                    color: textColor,
+                    size: 33,
+                  ),
+                ),
 
-          _buildTabs(),
-        ],
-      ),
-    );
-  }
+                Positioned(
+                  right: 3,
+                  top: 1,
+                  child: Container(
+                    width: 9,
+                    height: 9,
+                    decoration: const BoxDecoration(
+                      color: _C.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 20),
+
+        _buildTabs(),
+      ],
+    ),
+  );
+}
 
   void _selectTaskTab(int index) {
     setState(() {
@@ -4153,110 +4135,6 @@ class _PulseDot extends StatelessWidget {
       width: 9,
       height: 9,
       decoration: const BoxDecoration(color: _C.red, shape: BoxShape.circle),
-    );
-  }
-}
-
-// =============================================================
-// DRAWER
-// =============================================================
-
-class _AppDrawer extends StatelessWidget {
-  const _AppDrawer();
-
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _C.red,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      color: Colors.white,
-                      size: 30,
-                    ),
-                  ),
-
-                  const SizedBox(width: 12),
-
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'TaskProof',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontFamily: 'Nunito Sans',
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-
-                        Text(
-                          user?.email ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: _C.grey, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const Divider(),
-
-            ListTile(
-              leading: const Icon(Icons.task_alt_rounded),
-              title: const Text('My Tasks'),
-              onTap: () {
-                Navigator.pop(context);
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.history_rounded),
-              title: const Text('History'),
-              onTap: () {},
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.settings_outlined),
-              title: const Text('Settings'),
-              onTap: () {},
-            ),
-
-            const Spacer(),
-
-            const Divider(),
-
-            ListTile(
-              leading: const Icon(Icons.logout_rounded, color: _C.red),
-              title: const Text('Log out', style: TextStyle(color: _C.red)),
-              onTap: () async {
-                Navigator.pop(context);
-
-                await FirebaseAuth.instance.signOut();
-              },
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
