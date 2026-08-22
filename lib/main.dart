@@ -121,10 +121,26 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    await _auth.signInWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
-    );
+    final normalizedEmail = normalizeEmail(email);
+
+    if (normalizedEmail.isEmpty || password.isEmpty) {
+      throw FirebaseAuthException(
+        code: 'missing-credentials',
+        message: 'Enter your email address and password.',
+      );
+    }
+
+    try {
+      await _auth.signInWithEmailAndPassword(
+        email: normalizedEmail,
+        password: password,
+      );
+    } on FirebaseAuthException catch (error) {
+      debugPrint(
+        'EMAIL LOGIN FAILED: code=${error.code}, message=${error.message}',
+      );
+      rethrow;
+    }
   }
 
   static Future<void> createAccount({
@@ -132,17 +148,81 @@ class AuthService {
     required String email,
     required String password,
   }) async {
+    final normalizedEmail = normalizeEmail(email);
+
     final credential = await _auth.createUserWithEmailAndPassword(
-      email: email.trim(),
+      email: normalizedEmail,
       password: password,
     );
 
-    await credential.user?.updateDisplayName(name.trim());
-    await credential.user?.sendEmailVerification();
+    final user = credential.user;
+
+    if (user == null) {
+      throw FirebaseAuthException(
+        code: 'account-creation-failed',
+        message: 'Firebase did not return the newly created user.',
+      );
+    }
+
+    await user.updateDisplayName(name.trim());
+    await user.updatePassword(password);
+    await user.sendEmailVerification();
+    await user.reload();
+
+    final refreshedUser = _auth.currentUser;
+    final hasPasswordProvider =
+        refreshedUser?.providerData.any(
+          (provider) => provider.providerId == 'password',
+        ) ??
+        false;
+
+    if (!hasPasswordProvider) {
+      throw FirebaseAuthException(
+        code: 'password-provider-missing',
+        message:
+            'The account was created, but email/password sign-in was not attached.',
+      );
+    }
+  }
+
+  static Future<void> setPasswordForCurrentAccount({
+    required String password,
+  }) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw FirebaseAuthException(
+        code: 'not-signed-in',
+        message: 'You must be signed in first.',
+      );
+    }
+
+    final email = user.email;
+    if (email == null || email.isEmpty) {
+      throw FirebaseAuthException(
+        code: 'missing-email',
+        message: 'This account does not have an email address.',
+      );
+    }
+
+    final alreadyHasPassword = user.providerData.any(
+      (provider) => provider.providerId == 'password',
+    );
+
+    if (alreadyHasPassword) {
+      await user.updatePassword(password);
+      return;
+    }
+
+    final passwordCredential = EmailAuthProvider.credential(
+      email: normalizeEmail(email),
+      password: password,
+    );
+    await user.linkWithCredential(passwordCredential);
   }
 
   static Future<void> sendPasswordReset(String email) async {
-    await _auth.sendPasswordResetEmail(email: email.trim());
+    await _auth.sendPasswordResetEmail(email: normalizeEmail(email));
   }
 
   static Future<void> signInWithGoogle() async {
@@ -206,6 +286,15 @@ class AuthService {
           return 'Too many attempts. Please wait and try again.';
         case 'network-request-failed':
           return 'No internet connection. Check your connection and try again.';
+        case 'missing-credentials':
+          return 'Enter your email address and password.';
+        case 'account-creation-failed':
+        case 'password-provider-missing':
+          return 'Your account could not be set up for email and password sign-in.';
+        case 'not-signed-in':
+        case 'missing-email':
+          return error.message ??
+              'This account cannot use email and password sign-in.';
         case 'popup-closed-by-user':
         case 'canceled-popup-request':
           return 'Sign-in was cancelled.';
@@ -1063,4 +1152,11 @@ class OrDivider extends StatelessWidget {
 
 bool isValidEmail(String value) {
   return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value);
+}
+
+/// Keeps the identifier sent to Firebase consistent with the value used when
+/// the account was created. Passwords are intentionally not normalized: spaces
+/// are valid password characters and changing them would change the password.
+String normalizeEmail(String value) {
+  return value.trim().toLowerCase();
 }

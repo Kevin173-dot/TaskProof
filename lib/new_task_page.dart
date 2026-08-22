@@ -1575,19 +1575,51 @@ class _NewTaskPageState extends State<NewTaskPage> {
                 items: const [
                   DropdownMenuItem(
                     value: FocusActivity.general,
-                    child: Text('General'),
+                    child: Text(
+                      'General',
+                      style: TextStyle(
+                        color: Color(0xFF777A84),
+                        fontSize: 11,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                   DropdownMenuItem(
                     value: FocusActivity.reading,
-                    child: Text('Reading'),
+                    child: Text(
+                      'Reading',
+                      style: TextStyle(
+                        color: Color(0xFF777A84),
+                        fontSize: 11,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                   DropdownMenuItem(
                     value: FocusActivity.writingNotes,
-                    child: Text('Writing / Notes'),
+                    child: Text(
+                      'Writing / Notes',
+                      style: TextStyle(
+                        color: Color(0xFF777A84),
+                        fontSize: 11,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                   DropdownMenuItem(
                     value: FocusActivity.computerWork,
-                    child: Text('Computer Work'),
+                    child: Text(
+                      'Computer Work',
+                      style: TextStyle(
+                        color: Color(0xFF777A84),
+                        fontSize: 11,
+                        fontFamily: 'Nunito Sans',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ],
                 onChanged: (value) {
@@ -3360,6 +3392,12 @@ class _NewTaskPageState extends State<NewTaskPage> {
                                   child: Text(
                                     _workoutExerciseLabel(exercise),
                                     overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFF777A84),
+                                      fontSize: 11,
+                                      fontFamily: 'Nunito Sans',
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -3418,8 +3456,8 @@ class _NewTaskPageState extends State<NewTaskPage> {
                 const SizedBox(width: 10),
 
                 Container(
-                  width: 140,
-                  height: 94,
+                  width: 146,
+                  height: 108,
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
                     color: widget.isDarkMode ? _T.surface : Colors.white,
@@ -3432,6 +3470,7 @@ class _NewTaskPageState extends State<NewTaskPage> {
                       return _RepGoalWheel(
                         controller: _repGoalController,
                         selectedValue: value,
+                        dark: widget.isDarkMode,
                         onChanged: (newValue) {
                           workoutRepGoal = newValue;
                           _repGoalValue.value = newValue;
@@ -6051,18 +6090,190 @@ class _RepGoalWheel extends StatelessWidget {
     required this.controller,
     required this.selectedValue,
     required this.onChanged,
+    required this.dark,
   });
 
   final FixedExtentScrollController controller;
   final int selectedValue;
   final ValueChanged<int> onChanged;
+  final bool dark;
+
+  Future<void> _enterRepGoal(BuildContext context) async {
+    final textController = TextEditingController(text: '$selectedValue');
+
+    final result = await showDialog<int>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: dark ? .48 : .28),
+      builder: (dialogContext) {
+        final surface = dark ? const Color(0xFF15181E) : Colors.white;
+        final primary = dark
+            ? const Color(0xFFF4F6F8)
+            : const Color(0xFF181A20);
+        final secondary = dark
+            ? const Color(0xFF9DA3AE)
+            : const Color(0xFF777A84);
+        final border = dark ? const Color(0xFF2B3038) : const Color(0xFFE7E8EC);
+
+        void submit() {
+          final value = int.tryParse(textController.text.trim());
+          if (value != null && value >= 1 && value <= 200) {
+            Navigator.pop(dialogContext, value);
+          }
+        }
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: border, width: .8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: dark ? .22 : .08),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Set rep goal',
+                  style: TextStyle(
+                    fontFamily: 'Nunito Sans',
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: primary,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Enter the number of repetitions you want to complete.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.35,
+                    color: secondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: border, width: .8),
+                  ),
+                  child: TextField(
+                    controller: textController,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(3),
+                    ],
+                    style: TextStyle(
+                      fontFamily: 'Nunito Sans',
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: primary,
+                    ),
+                    decoration: InputDecoration(
+                      suffixText: 'REPS',
+                      suffixStyle: TextStyle(
+                        fontFamily: 'Nunito Sans',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: secondary,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      border: InputBorder.none,
+                    ),
+                    onSubmitted: (_) => submit(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Choose a value from 1 to 200.',
+                  style: TextStyle(fontSize: 11.5, color: secondary),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          side: BorderSide(color: border, width: .8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(
+                            fontFamily: 'Nunito Sans',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: submit,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF111C),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                        ),
+                        child: const Text(
+                          'Set Goal',
+                          style: TextStyle(
+                            fontFamily: 'Nunito Sans',
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    textController.dispose();
+    if (result == null) return;
+
+    onChanged(result);
+    if (controller.hasClients) {
+      await controller.animateToItem(
+        result - 1,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         SizedBox(
-          height: 70,
+          height: 90,
           child: ListWheelScrollView.useDelegate(
             controller: controller,
             itemExtent: 30,
@@ -6078,18 +6289,35 @@ class _RepGoalWheel extends StatelessWidget {
                 final value = index + 1;
                 final selected = value == selectedValue;
 
-                return Center(
-                  child: Text(
-                    '$value',
-                    style: TextStyle(
-                      fontSize: selected ? 27 : 15,
-                      fontFamily: 'Nunito Sans',
-                      fontWeight: selected ? FontWeight.w900 : FontWeight.w500,
-                      color: selected
-                          ? Theme.of(context).colorScheme.onSurface
-                          : const Color(0xFF8D9099),
-                    ),
+                final text = Text(
+                  '$value',
+                  style: TextStyle(
+                    fontSize: selected ? 23 : 14,
+                    height: 1.1,
+                    fontFamily: 'Nunito Sans',
+                    fontWeight: selected ? FontWeight.w900 : FontWeight.w500,
+                    color: selected
+                        ? Theme.of(context).colorScheme.onSurface
+                        : const Color(0xFF8D9099),
                   ),
+                );
+
+                return Center(
+                  child: selected
+                      ? GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => _enterRepGoal(context),
+                          child: SizedBox(
+                            height: 30,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                              ),
+                              child: text,
+                            ),
+                          ),
+                        )
+                      : text,
                 );
               },
             ),

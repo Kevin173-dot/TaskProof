@@ -249,116 +249,116 @@ class _MainPageState extends State<MainPage> {
   // HEADER
   // ===========================================================
 
-Widget _buildHeader() {
-  final textColor = isDarkMode ? const Color(0xFFF4F6F8) : _C.dark;
+  Widget _buildHeader() {
+    final textColor = isDarkMode ? const Color(0xFFF4F6F8) : _C.dark;
 
-  final completedToday = verifiedToday;
+    final completedToday = verifiedToday;
 
-  return Padding(
-    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // =====================================================
-            // LEFT SIDE
-            // Slightly LOWER than the bell
-            // =====================================================
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'My Tasks',
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 28,
-                        height: 1,
-                        fontFamily: 'Nunito Sans',
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -.7,
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.verified_outlined,
-                          color: isDarkMode
-                              ? const Color(0xFF9DA8B8)
-                              : const Color(0xFF777B9F),
-                          size: 19,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // =====================================================
+              // LEFT SIDE
+              // Slightly LOWER than the bell
+              // =====================================================
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'My Tasks',
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 28,
+                          height: 1,
+                          fontFamily: 'Nunito Sans',
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -.7,
                         ),
+                      ),
 
-                        const SizedBox(width: 7),
+                      const SizedBox(height: 10),
 
-                        Text(
-                          '$completedToday ${completedToday == 1 ? 'task' : 'tasks'} verified today',
-                          style: TextStyle(
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.verified_outlined,
                             color: isDarkMode
                                 ? const Color(0xFF9DA8B8)
-                                : const Color(0xFF666A95),
-                            fontSize: 14,
+                                : const Color(0xFF777B9F),
+                            size: 19,
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+
+                          const SizedBox(width: 7),
+
+                          Text(
+                            '$completedToday ${completedToday == 1 ? 'task' : 'tasks'} verified today',
+                            style: TextStyle(
+                              color: isDarkMode
+                                  ? const Color(0xFF9DA8B8)
+                                  : const Color(0xFF666A95),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-            // =====================================================
-            // BELL
-            // Remains at the TOP of the header
-            // =====================================================
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                IconButton(
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 44,
-                    minHeight: 44,
-                  ),
-                  onPressed: _showNotifications,
-                  icon: Icon(
-                    Icons.notifications_none_rounded,
-                    color: textColor,
-                    size: 33,
-                  ),
-                ),
-
-                Positioned(
-                  right: 3,
-                  top: 1,
-                  child: Container(
-                    width: 9,
-                    height: 9,
-                    decoration: const BoxDecoration(
-                      color: _C.red,
-                      shape: BoxShape.circle,
+              // =====================================================
+              // BELL
+              // Remains at the TOP of the header
+              // =====================================================
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    onPressed: _showNotifications,
+                    icon: Icon(
+                      Icons.notifications_none_rounded,
+                      color: textColor,
+                      size: 33,
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
 
-        const SizedBox(height: 20),
+                  Positioned(
+                    right: 3,
+                    top: 1,
+                    child: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: const BoxDecoration(
+                        color: _C.red,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
 
-        _buildTabs(),
-      ],
-    ),
-  );
-}
+          const SizedBox(height: 20),
+
+          _buildTabs(),
+        ],
+      ),
+    );
+  }
 
   void _selectTaskTab(int index) {
     setState(() {
@@ -1543,43 +1543,62 @@ Widget _buildHeader() {
         top: false,
         child: Row(
           children: [
-            _bottomItem(0, Icons.task_alt_rounded, 'Tasks'),
-
-            _bottomItem(1, Icons.history_rounded, 'History'),
-
-            _bottomItem(2, Icons.settings_outlined, 'Settings'),
+            _bottomItem(index: 0, label: 'Tasks'),
+            _bottomItem(index: 1, label: 'History'),
+            _bottomItem(index: 2, label: 'Settings'),
           ],
         ),
       ),
     );
   }
 
-  Widget _bottomItem(int index, IconData icon, String label) {
+  Widget _bottomItem({required int index, required String label}) {
     final selected = selectedBottomTab == index;
+    final color = selected ? _C.red : _C.grey;
+
+    Widget iconWidget;
+
+    if (index == 0) {
+      iconWidget = SizedBox(
+        width: 34,
+        height: 34,
+        child: CustomPaint(painter: _TasksNavIconPainter(color: color)),
+      );
+    } else if (index == 1) {
+      // =========================================================
+      // HISTORY
+      // =========================================================
+      iconWidget = Icon(Icons.access_time_rounded, color: color, size: 29);
+    } else {
+      // =========================================================
+      // SETTINGS
+      // Slightly larger with more surrounding breathing room
+      // =========================================================
+      iconWidget = SizedBox(
+        width: 38,
+        height: 38,
+        child: Center(
+          child: Icon(Icons.settings_outlined, color: color, size: 32),
+        ),
+      );
+    }
 
     return Expanded(
       child: InkWell(
         onTap: () {
           setState(() {
             selectedBottomTab = index;
-
             showCreateMenu = false;
           });
         },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: selected ? _C.red : _C.grey, size: 29),
+            iconWidget,
 
             const SizedBox(height: 4),
 
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? _C.red : _C.grey,
-                fontSize: 13,
-              ),
-            ),
+            Text(label, style: TextStyle(color: color, fontSize: 13)),
           ],
         ),
       ),
@@ -4228,6 +4247,79 @@ class _ApertureButtonPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ApertureButtonPainter oldDelegate) {
     return oldDelegate.progress != progress;
+  }
+}
+
+class _TasksNavIconPainter extends CustomPainter {
+  const _TasksNavIconPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.6
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final w = size.width;
+    final h = size.height;
+    const inset = 5.0;
+    const cornerLength = 7.0;
+
+    canvas.drawLine(
+      const Offset(inset, inset + cornerLength),
+      const Offset(inset, inset),
+      paint,
+    );
+    canvas.drawLine(
+      const Offset(inset, inset),
+      const Offset(inset + cornerLength, inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w - inset - cornerLength, inset),
+      Offset(w - inset, inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w - inset, inset),
+      Offset(w - inset, inset + cornerLength),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(inset, h - inset - cornerLength),
+      Offset(inset, h - inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(inset, h - inset),
+      Offset(inset + cornerLength, h - inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w - inset - cornerLength, h - inset),
+      Offset(w - inset, h - inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w - inset, h - inset),
+      Offset(w - inset, h - inset - cornerLength),
+      paint,
+    );
+
+    final check = Path()
+      ..moveTo(w * 0.33, h * 0.52)
+      ..lineTo(w * 0.46, h * 0.65)
+      ..lineTo(w * 0.70, h * 0.37);
+    canvas.drawPath(check, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TasksNavIconPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 
